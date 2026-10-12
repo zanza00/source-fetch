@@ -17,6 +17,11 @@ import (
 
 const prog = "source-fetch"
 
+// Version is the release version. It is injected at build time with
+// -X github.com/zanza00/source-fetch/internal/cli.Version=... and defaults to
+// "dev" for plain `go build`/`go run`.
+var Version = "dev"
+
 // Run dispatches args and returns the process exit code.
 func Run(args []string) int {
 	if err := dispatch(args); err != nil {
@@ -43,6 +48,8 @@ func dispatch(args []string) error {
 		return cmdClean(args[1:])
 	case "manifest":
 		return cmdManifest()
+	case "version", "--version", "-v":
+		return cmdVersion()
 	case "help", "-h", "--help":
 		usage(os.Stderr)
 		return nil
@@ -188,6 +195,11 @@ func cmdClean(args []string) error {
 	return nil
 }
 
+func cmdVersion() error {
+	fmt.Println(Version)
+	return nil
+}
+
 func cmdManifest() error {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -254,6 +266,7 @@ commands:
   rm <name>              delete one cached tree
   clean                  delete the cache for the current manifest
   manifest               print the manifest path in use
+  version | --version    print the version
   help | -h | --help     print this usage
 
 environment:

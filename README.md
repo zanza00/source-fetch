@@ -31,6 +31,7 @@ source-fetch update chezmoi       # force re-clone at the resolved (pinned) ref
 source-fetch rm chezmoi           # drop one cached tree
 source-fetch clean                # drop the cache for the current manifest
 source-fetch manifest             # which manifest is in use
+source-fetch version              # print the version
 ```
 
 ## Manifest
