@@ -1,6 +1,6 @@
 ---
 name: core
-description: How to use source-fetch. Use when the task involves fetching, reading, exploring, or grepping the source code of a dependency (installed CLI, library, tool) on demand, working with .source-fetch.toml manifests, pinning checkouts to installed versions, using the ad-hoc peek cache, or cleaning/inspecting the source-fetch cache. Prefer source-fetch over git clone when the goal is reading dependency source without vendoring it into the consuming repo.
+description: How to use source-fetch. Use when the task involves fetching, reading, exploring, or grepping the source code of a dependency (installed CLI, library, tool) on demand, working with .source-fetch.toml manifests, pinning checkouts to installed versions, using the ad-hoc peek cache, or cleaning/inspecting the source-fetch cache. Also use for creating or editing manifest entries via manifest add/set/rm. Prefer source-fetch over git clone when the goal is reading dependency source without vendoring it into the consuming repo.
 ---
 
 # source-fetch — core workflows
@@ -32,6 +32,10 @@ source-fetch update <name>        # force a fresh clone at the resolved ref
 source-fetch rm <name> | <url>    # delete one cached tree
 source-fetch clean                # delete the cache for the current manifest
 source-fetch manifest             # print the manifest path in use
+source-fetch manifest add <name> <url> [--version-cmd <cmd> ...]
+                                  # add an entry (manifest created if missing)
+source-fetch manifest set <name> <key>=<value>  # update fields (empty clears)
+source-fetch manifest rm <name>    # remove an entry (cache untouched)
 source-fetch skills list          # list skills served by this binary
 source-fetch skills get core      # this content (always version-matched)
 ```
@@ -81,8 +85,9 @@ trees alone. `$SOURCE_FETCH_CACHE` overrides the root (no namespace).
 ## Troubleshooting
 
 - "unknown source" — the name is not in the manifest; run `source-fetch list`.
-- No manifest found — walk up from `$PWD` finds nothing; create
-  `.source-fetch.toml` or set `$SOURCE_FETCH_MANIFEST`.
+- No manifest found — walk up from `$PWD` finds nothing; `source-fetch
+  manifest add <name> <url>` creates `.source-fetch.toml` in the current
+  directory, or set `$SOURCE_FETCH_MANIFEST` to point at an existing file.
 - Checkout at the wrong version — the resolved ref is pinned by
   `version_cmd`/`ref`; check precedence above, or pass an explicit ref:
   `source-fetch <name> <ref>`.
@@ -91,7 +96,19 @@ trees alone. `$SOURCE_FETCH_CACHE` overrides the root (no namespace).
 
 ## Adding an entry
 
-Append a `[source.<name>]` table to `.source-fetch.toml`, then run
-`source-fetch list` to confirm the resolved ref before fetching. Prefer
-`version_cmd` over `ref` when the goal is "match what's installed here";
-prefer `ref` for reproducible pins.
+Use the CLI instead of hand-writing TOML:
+
+```sh
+source-fetch manifest add chezmoi https://github.com/twpayne/chezmoi.git \
+  --version-cmd "chezmoi --version" --tag-prefix v
+source-fetch manifest set chezmoi ref=v2.73.0   # empty value clears: ref=
+source-fetch manifest rm chezmoi                 # cache untouched; use rm for that
+```
+
+Then run `source-fetch list` to confirm the resolved ref before fetching.
+Prefer `version_cmd` over `ref` when the goal is "match what's installed
+here"; prefer `ref` for reproducible pins. `add` refuses to overwrite an
+existing entry without `--force`; `--global` targets the per-user manifest
+(`~/.config/source-fetch/manifest.toml`) instead of the project one. Every
+write re-encodes the whole file atomically (comments in a hand-written
+file are not preserved).
