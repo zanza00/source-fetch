@@ -1,0 +1,31 @@
+# source-fetch manifest — annotated example
+#
+# One table per dependency, under [source.<name>]. Save as `.source-fetch.toml`
+# in your project root (auto-discovered by walking upward from $PWD), or point
+# $SOURCE_FETCH_MANIFEST at it.
+
+# A version-matched CLI tool: the checkout is pinned to the tag v<installed>.
+[source.chezmoi]
+url = "https://github.com/twpayne/chezmoi.git"
+version_cmd = "chezmoi --version"
+tag_prefix = "v"
+
+# A tool whose tags have no "v" prefix.
+[source.television]
+url = "https://github.com/alexpasmantier/television.git"
+version_cmd = "television --version"
+tag_prefix = ""
+
+# A persistent pin: `ref` always wins over version detection.
+[source.pinned-tool]
+url = "https://github.com/example/pinned-tool.git"
+ref = "v1.2.3"
+
+# No version detection: `default_ref` is used, else the default branch.
+[source.aurora]
+url = "https://github.com/ublue-os/aurora.git"
+default_ref = "stable"
+
+# Minimal entry: always the default branch.
+[source.some-library]
+url = "https://github.com/example/some-library.git"
