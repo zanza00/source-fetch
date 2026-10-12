@@ -42,6 +42,18 @@ cd "$proj"
 "$bin" manifest | grep -q ".source-fetch.toml" || fail "manifest discovery"
 pass "manifest discovery"
 
+# manifest add/set/rm edit the manifest file
+"$bin" manifest add tool2 "$bare" --version-cmd "echo 1.2.3" --tag-prefix v >/dev/null 2>&1 \
+  || fail "manifest add"
+grep -q '\[source.tool2\]' "$proj/.source-fetch.toml" || fail "manifest add not written"
+"$bin" manifest set tool2 ref=v1.2.3 >/dev/null 2>&1 || fail "manifest set"
+grep -q 'ref = "v1.2.3"' "$proj/.source-fetch.toml" || fail "manifest set not written"
+"$bin" manifest rm tool2 >/dev/null 2>&1 || fail "manifest rm"
+if grep -q '\[source.tool2\]' "$proj/.source-fetch.toml"; then
+  fail "manifest rm did not remove the entry"
+fi
+pass "manifest add/set/rm"
+
 # path: fetch + print dir, pinned to the version tag
 out="$("$bin" path tool)"
 [ -d "$out/.git" ] || fail "path did not produce a checkout"

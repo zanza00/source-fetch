@@ -5,6 +5,7 @@
 package manifest
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -77,7 +78,7 @@ func Load(path string) (*Manifest, error) {
 		if e.Transport == "" {
 			e.Transport = "git"
 		}
-		if err := e.validate(); err != nil {
+		if err := e.Validate(); err != nil {
 			return nil, err
 		}
 		m.Entries = append(m.Entries, e)
@@ -86,7 +87,7 @@ func Load(path string) (*Manifest, error) {
 	return m, nil
 }
 
-func (e *Entry) validate() error {
+func (e *Entry) Validate() error {
 	if strings.TrimSpace(e.Name) == "" {
 		return fmt.Errorf("manifest: source with empty name")
 	}
@@ -149,6 +150,94 @@ func Discover(startDir string) (string, error) {
 
 	return "", fmt.Errorf("manifest not found (searched for %s from %s; set %s)",
 		CanonicalName, startDir, EnvManifest)
+}
+
+// UserPath returns the per-user fallback manifest path
+// (~/.config/source-fetch/manifest.toml).
+func UserPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, userConfigRel), nil
+}
+
+// encodeEntry is the canonical write form of an Entry: only `url` is always
+// present, optional fields are omitted when empty, and the implied default
+// transport ("git") is not written out.
+type encodeEntry struct {
+	URL        string `toml:"url"`
+	Transport  string `toml:"transport,omitempty"`
+	VersionCmd string `toml:"version_cmd,omitempty"`
+	TagPrefix  string `toml:"tag_prefix,omitempty"`
+	Ref        string `toml:"ref,omitempty"`
+	DefaultRef string `toml:"default_ref,omitempty"`
+}
+
+type encodeFile struct {
+	Source map[string]encodeEntry `toml:"source"`
+}
+
+// Save rewrites the manifest file at m.Path from the in-memory entries.
+//
+// The whole file is re-encoded from the model, so comments and layout of a
+// hand-written file are not preserved. The write is atomic: a temp file in
+// the same directory is renamed over the target, and the permissions of an
+// existing file are kept.
+func (m *Manifest) Save() error {
+	source := make(map[string]encodeEntry, len(m.Entries))
+	for _, e := range m.Entries {
+		if err := e.Validate(); err != nil {
+			return err
+		}
+		ee := encodeEntry{URL: e.URL}
+		if e.Transport != "" && e.Transport != "git" {
+			ee.Transport = e.Transport
+		}
+		if e.VersionCmd != "" {
+			ee.VersionCmd = e.VersionCmd
+		}
+		if e.TagPrefix != "" {
+			ee.TagPrefix = e.TagPrefix
+		}
+		if e.Ref != "" {
+			ee.Ref = e.Ref
+		}
+		if e.DefaultRef != "" {
+			ee.DefaultRef = e.DefaultRef
+		}
+		source[e.Name] = ee
+	}
+
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(encodeFile{Source: source}); err != nil {
+		return fmt.Errorf("encode manifest %s: %w", m.Path, err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(m.Path), 0o755); err != nil {
+		return err
+	}
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(m.Path); err == nil {
+		mode = info.Mode().Perm()
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(m.Path), "."+CanonicalName+".tmp*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name()) // no-op after a successful rename
+	if _, err := tmp.Write(buf.Bytes()); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), m.Path)
 }
 
 func fileExists(path string) bool {

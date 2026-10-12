@@ -10,6 +10,7 @@ import (
 
 	"github.com/zanza00/source-fetch/internal/cache"
 	"github.com/zanza00/source-fetch/internal/fetch"
+	"github.com/zanza00/source-fetch/internal/manifest"
 )
 
 // captureStdout runs f with os.Stdout redirected and returns what was
@@ -214,5 +215,89 @@ func TestPeekListEmpty(t *testing.T) {
 	}
 	if !strings.Contains(out, "NAME") {
 		t.Fatalf("empty peek list should still print a header, got %q", out)
+	}
+}
+
+func TestManifestAddSetRm(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, manifest.CanonicalName)
+	t.Setenv(manifest.EnvManifest, path)
+
+	run := func(wantCode int, args ...string) {
+		t.Helper()
+		var code int
+		silenceStderr(t, func() { code = Run(args) })
+		if code != wantCode {
+			t.Fatalf("Run(%v) exit code = %d, want %d", args, code, wantCode)
+		}
+	}
+
+	// add creates the manifest and the entry.
+	run(0, "manifest", "add", "chezmoi", "https://example.com/chezmoi.git",
+		"--version-cmd", "chezmoi --version", "--tag-prefix", "v")
+	m, err := manifest.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, ok := m.Lookup("chezmoi")
+	if !ok || e.URL != "https://example.com/chezmoi.git" || e.VersionCmd != "chezmoi --version" || e.TagPrefix != "v" {
+		t.Fatalf("add wrote wrong entry: %+v", e)
+	}
+
+	// a second add without --force fails; with --force it overwrites.
+	run(1, "manifest", "add", "chezmoi", "https://example.com/other.git")
+	run(0, "manifest", "add", "chezmoi", "https://example.com/other.git", "--force", "--ref", "v2.0.0")
+	m, _ = manifest.Load(path)
+	e, _ = m.Lookup("chezmoi")
+	if e.URL != "https://example.com/other.git" || e.Ref != "v2.0.0" || e.VersionCmd != "" {
+		t.Fatalf("force add did not overwrite: %+v", e)
+	}
+
+	// set updates single fields; an empty value clears.
+	run(0, "manifest", "set", "chezmoi", "version_cmd=chezmoi --version", "ref=v2.73.0")
+	m, _ = manifest.Load(path)
+	e, _ = m.Lookup("chezmoi")
+	if e.VersionCmd != "chezmoi --version" || e.Ref != "v2.73.0" {
+		t.Fatalf("set wrote wrong entry: %+v", e)
+	}
+	run(0, "manifest", "set", "chezmoi", "ref=")
+	m, _ = manifest.Load(path)
+	e, _ = m.Lookup("chezmoi")
+	if e.Ref != "" {
+		t.Fatalf("set with empty value did not clear: %+v", e)
+	}
+
+	// failures: unknown key, unknown source, unknown flag.
+	run(1, "manifest", "set", "chezmoi", "nope=x")
+	run(1, "manifest", "set", "ghost", "ref=v1")
+	run(1, "manifest", "add", "x", "https://example.com/x.git", "--nope")
+
+	// bare manifest still prints the path.
+	var code int
+	out := captureStdout(t, func() {
+		silenceStderr(t, func() { code = Run([]string{"manifest"}) })
+	})
+	if code != 0 || strings.TrimSpace(out) != path {
+		t.Fatalf("manifest: code=%d out=%q, want %q", code, out, path)
+	}
+	run(1, "manifest", "bogus")
+
+	// rm drops the entry, leaving a valid manifest.
+	run(0, "manifest", "rm", "chezmoi")
+	m, err = manifest.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m.Lookup("chezmoi"); ok {
+		t.Fatal("manifest rm did not remove the entry")
+	}
+	run(1, "manifest", "rm", "chezmoi")
+
+	// rm on a manifest that does not exist fails without creating it.
+	missing := filepath.Join(t.TempDir(), "none.toml")
+	t.Setenv(manifest.EnvManifest, missing)
+	run(1, "manifest", "rm", "x")
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Fatalf("rm created %s", missing)
 	}
 }

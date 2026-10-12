@@ -42,3 +42,24 @@ Version detection is skipped entirely when `version_cmd`'s first word is not on
 3. `~/.config/source-fetch/manifest.toml`.
 
 There is no baked-in default manifest.
+
+## Editing from the CLI
+
+`manifest add`, `manifest set` and `manifest rm` edit the manifest file so
+you never hand-write TOML:
+
+```sh
+source-fetch manifest add chezmoi https://github.com/twpayne/chezmoi.git \
+  --version-cmd "chezmoi --version" --tag-prefix v
+source-fetch manifest set chezmoi ref=v2.73.0      # empty value clears: ref=
+source-fetch manifest rm chezmoi                   # cache untouched; see rm
+```
+
+- `add` refuses to overwrite an existing entry unless `--force` is given.
+- Writes target the manifest in use (`$SOURCE_FETCH_MANIFEST`, else the
+  discovered one, else `.source-fetch.toml` in the current directory);
+  `--global` targets `~/.config/source-fetch/manifest.toml` instead.
+- Every write re-encodes the whole file from the model (atomic temp-file +
+  rename, permissions preserved). Comments and layout of a hand-written
+  file are not preserved, and the implied `transport = "git"` default is
+  not written out.

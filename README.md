@@ -35,6 +35,10 @@ source-fetch rm chezmoi           # drop one cached tree
 source-fetch rm <url>             # drop one ad-hoc tree
 source-fetch clean                # drop the cache for the current manifest
 source-fetch manifest             # which manifest is in use
+source-fetch manifest add <name> <url> [--version-cmd <cmd> ...]
+                                  # add an entry (manifest created if missing)
+source-fetch manifest set <name> key=value  # update fields (empty value clears)
+source-fetch manifest rm <name>    # remove an entry (cache untouched)
 source-fetch skills               # list skills served by this binary
 source-fetch skills get core      # print the core skill (usage guide)
 source-fetch version              # print the version

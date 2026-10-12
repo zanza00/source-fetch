@@ -86,7 +86,7 @@ func dispatch(args []string) error {
 	case "clean":
 		return cmdClean(args[1:])
 	case "manifest":
-		return cmdManifest()
+		return cmdManifest(args[1:])
 	case "skills":
 		return cmdSkills(args[1:])
 	case "version", "--version", "-v":
@@ -324,16 +324,262 @@ func cmdVersion() error {
 	return nil
 }
 
-func cmdManifest() error {
+func cmdManifest(args []string) error {
+	if len(args) == 0 {
+		wd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		path, err := manifest.Discover(wd)
+		if err != nil {
+			return err
+		}
+		fmt.Println(path)
+		return nil
+	}
+	switch args[0] {
+	case "add":
+		return cmdManifestAdd(args[1:])
+	case "set":
+		return cmdManifestSet(args[1:])
+	case "rm":
+		return cmdManifestRm(args[1:])
+	default:
+		return fmt.Errorf("unknown manifest subcommand %q (want add, set or rm)", args[0])
+	}
+}
+
+// parseFlags splits args into positionals and a flag map. knownFlags lists
+// every accepted flag; a value of true means the flag takes an argument
+// (--name <value> or --name=<value>, never empty), false means boolean
+// (--name, or --name=true|false). Unknown flags are an error.
+func parseFlags(args []string, knownFlags map[string]bool) ([]string, map[string]string, error) {
+	pos := []string{}
+	flags := map[string]string{}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if !strings.HasPrefix(a, "--") {
+			pos = append(pos, a)
+			continue
+		}
+		name, value, hasValue := strings.Cut(strings.TrimPrefix(a, "--"), "=")
+		takesValue, ok := knownFlags[name]
+		if !ok {
+			return nil, nil, fmt.Errorf("unknown flag --%s", name)
+		}
+		if takesValue {
+			if !hasValue {
+				if i+1 >= len(args) {
+					return nil, nil, fmt.Errorf("missing value for --%s", name)
+				}
+				i++
+				value = args[i]
+			}
+			if value == "" {
+				return nil, nil, fmt.Errorf("--%s needs a value", name)
+			}
+		} else if !hasValue {
+			value = "true"
+		}
+		flags[name] = value
+	}
+	return pos, flags, nil
+}
+
+// manifestWritePath picks the file that manifest add/set/rm edit: with
+// --global the per-user manifest, else $SOURCE_FETCH_MANIFEST, else the
+// discovered manifest, else .source-fetch.toml in the current directory.
+func manifestWritePath(global bool) (string, error) {
+	if global {
+		return manifest.UserPath()
+	}
+	if v := os.Getenv(manifest.EnvManifest); v != "" {
+		return filepath.Abs(v)
+	}
 	wd, err := os.Getwd()
 	if err != nil {
-		return err
+		return "", err
 	}
-	path, err := manifest.Discover(wd)
+	if path, err := manifest.Discover(wd); err == nil {
+		return path, nil
+	}
+	return filepath.Join(wd, manifest.CanonicalName), nil
+}
+
+// loadForEdit loads path when it exists, else returns a fresh manifest for
+// it (so add can create the file).
+func loadForEdit(path string) (*manifest.Manifest, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &manifest.Manifest{Path: path}, nil
+		}
+		return nil, err
+	}
+	if info.IsDir() {
+		return nil, fmt.Errorf("manifest %s is a directory", path)
+	}
+	return manifest.Load(path)
+}
+
+// putEntry replaces the entry named e.Name, or appends it.
+func putEntry(m *manifest.Manifest, e *manifest.Entry) {
+	for i, x := range m.Entries {
+		if x.Name == e.Name {
+			m.Entries[i] = e
+			return
+		}
+	}
+	m.Entries = append(m.Entries, e)
+}
+
+func cmdManifestAdd(args []string) error {
+	pos, flags, err := parseFlags(args, map[string]bool{
+		"version-cmd": true,
+		"tag-prefix":  true,
+		"ref":         true,
+		"default-ref": true,
+		"global":      false,
+		"force":       false,
+	})
 	if err != nil {
 		return err
 	}
-	fmt.Println(path)
+	if len(pos) < 2 {
+		return fmt.Errorf("usage: manifest add <name> <url> [--version-cmd <cmd>] [--tag-prefix <p>] [--ref <ref>] [--default-ref <ref>] [--global] [--force]")
+	}
+	name, url := pos[0], pos[1]
+	if len(pos) > 2 {
+		return fmt.Errorf("unexpected argument %q", pos[2])
+	}
+	path, err := manifestWritePath(flags["global"] == "true")
+	if err != nil {
+		return err
+	}
+	m, err := loadForEdit(path)
+	if err != nil {
+		return err
+	}
+	if _, exists := m.Lookup(name); exists && flags["force"] != "true" {
+		return fmt.Errorf("source %q already exists (use --force to overwrite, or manifest set)", name)
+	}
+	e := &manifest.Entry{
+		Name:       name,
+		URL:        url,
+		Transport:  "git",
+		VersionCmd: flags["version-cmd"],
+		TagPrefix:  flags["tag-prefix"],
+		Ref:        flags["ref"],
+		DefaultRef: flags["default-ref"],
+	}
+	if err := e.Validate(); err != nil {
+		return err
+	}
+	putEntry(m, e)
+	if err := m.Save(); err != nil {
+		return err
+	}
+	progress("added %s to %s", name, path)
+	return nil
+}
+
+// setEntryField assigns value to the named field of e. An empty value clears
+// the field.
+func setEntryField(e *manifest.Entry, key, value string) error {
+	switch key {
+	case "url":
+		e.URL = value
+	case "version_cmd":
+		e.VersionCmd = value
+	case "tag_prefix":
+		e.TagPrefix = value
+	case "ref":
+		e.Ref = value
+	case "default_ref":
+		e.DefaultRef = value
+	default:
+		return fmt.Errorf("unknown field %q (want url, version_cmd, tag_prefix, ref or default_ref)", key)
+	}
+	return nil
+}
+
+func cmdManifestSet(args []string) error {
+	pos, flags, err := parseFlags(args, map[string]bool{"global": false})
+	if err != nil {
+		return err
+	}
+	if len(pos) < 2 {
+		return fmt.Errorf("usage: manifest set <name> <key>=<value>... (url, version_cmd, tag_prefix, ref, default_ref; empty value clears)")
+	}
+	path, err := manifestWritePath(flags["global"] == "true")
+	if err != nil {
+		return err
+	}
+	m, err := loadForEdit(path)
+	if err != nil {
+		return err
+	}
+	e, ok := m.Lookup(pos[0])
+	if !ok {
+		return fmt.Errorf("unknown source %q", pos[0])
+	}
+	for _, kv := range pos[1:] {
+		key, value, found := strings.Cut(kv, "=")
+		if !found {
+			return fmt.Errorf("expected key=value, got %q", kv)
+		}
+		if err := setEntryField(e, key, value); err != nil {
+			return err
+		}
+	}
+	if err := e.Validate(); err != nil {
+		return err
+	}
+	if err := m.Save(); err != nil {
+		return err
+	}
+	progress("updated %s in %s", pos[0], path)
+	return nil
+}
+
+func cmdManifestRm(args []string) error {
+	pos, flags, err := parseFlags(args, map[string]bool{"global": false})
+	if err != nil {
+		return err
+	}
+	if len(pos) != 1 {
+		return fmt.Errorf("usage: manifest rm <name> (removes the manifest entry; the cache is untouched, use rm <name> for that)")
+	}
+	name := pos[0]
+	path, err := manifestWritePath(flags["global"] == "true")
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("no manifest at %s", path)
+		}
+		return err
+	}
+	m, err := manifest.Load(path)
+	if err != nil {
+		return err
+	}
+	idx := -1
+	for i, e := range m.Entries {
+		if e.Name == name {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return fmt.Errorf("unknown source %q", name)
+	}
+	m.Entries = append(m.Entries[:idx], m.Entries[idx+1:]...)
+	if err := m.Save(); err != nil {
+		return err
+	}
+	progress("removed %s from %s (cache untouched; use rm %s to drop it)", name, path, name)
 	return nil
 }
 
@@ -392,6 +638,13 @@ commands:
   rm <name> | <url>      delete one cached tree (manifest entry or ad-hoc)
   clean                  delete the cache for the current manifest
   manifest               print the manifest path in use
+  manifest add <name> <url> [--version-cmd <cmd>] [--tag-prefix <p>]
+                         [--ref <ref>] [--default-ref <ref>] [--global]
+                         [--force]   add an entry (manifest created if missing)
+  manifest set <name> <key>=<value>...
+                         set entry fields (url, version_cmd, tag_prefix, ref,
+                         default_ref; empty value clears)
+  manifest rm <name>     remove an entry from the manifest (cache untouched)
   skills | skills list   list skills served by this binary (name, description)
   skills get <name>      print a skill's content (matches this version)
   skills get --all       print every skill
