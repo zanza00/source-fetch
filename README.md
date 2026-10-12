@@ -1,24 +1,76 @@
 # source-fetch
 
-Fetch the **source code of a dependency on demand** and cache it locally, so a
-human or an agent can read it without vendoring it into the consuming repo.
+**A CLI and an agent skill for reading dependency source code on demand.**
+
+source-fetch fetches dependency source into a local cache and returns the path,
+so you or your coding agent can explore it without vendoring it into your project.
+The CLI handles fetching, version resolution, and caching. The companion skill
+teaches your agent when and how to use it, with a usage guide bundled in the
+binary to match the installed CLI version.
 
 - **On demand only** — nothing is fetched until asked.
-- **Version-matched** — the checkout is pinned to the tag of the *installed*
-  version when a `version_cmd` is configured.
-- **Namespaced cache** — per-manifest, so two projects never collide.
+- **Version-aware** — resolve a tag from the *installed* version when a
+  `version_cmd` is configured, or choose a tag, branch, or commit yourself.
+- **Reusable cache** — keep dependency checkouts outside your project,
+  namespaced by manifest.
 - **One-off `peek`** — fetch any git URL once, in a separate ad-hoc cache.
 - **Agent-friendly** — prints a plain directory on stdout, progress on stderr.
 
-## Install
+## Install the CLI and skill
+
+For coding agents, install both parts: the CLI runs the commands, and the skill
+adds the workflow to your agent. They currently require two installation steps.
+
+### 1. Install the CLI
+
+With Go installed:
 
 ```sh
 go install github.com/zanza00/source-fetch/cmd/source-fetch@latest
 ```
 
-or grab a binary from the GitHub Releases page (Linux/macOS/Windows).
+Or download a binary from [GitHub Releases](https://github.com/zanza00/source-fetch/releases)
+for Linux, macOS, or Windows and put it on `PATH`.
 
-Requires `git` on `PATH`.
+Requires `git` and `source-fetch` on `PATH`; Go is only needed for `go install`.
+
+### 2. Install the agent skill
+
+With Node.js/npm available, run:
+
+```sh
+npx skills add zanza00/source-fetch
+```
+
+Select your coding agent in the installer. The skill tells it to load
+`source-fetch skills get core` before using the CLI, so the usage instructions
+come from your installed binary. Updating the CLI also updates that bundled guide.
+
+The CLI also works directly from a terminal without an agent skill.
+
+## Quick start
+
+With the CLI and skill installed, ask your agent, for example:
+
+> Read the source of my installed chezmoi version and show how it applies templates.
+
+You can also use the CLI directly. Fetch a repository once, without a manifest:
+
+```sh
+source-fetch peek https://github.com/twpayne/chezmoi.git
+```
+
+For a dependency you revisit, add it to a manifest and configure version detection:
+
+```sh
+source-fetch manifest add chezmoi https://github.com/twpayne/chezmoi.git \
+  --version-cmd "chezmoi --version" --tag-prefix v
+source-fetch path chezmoi
+```
+
+`path` prints the cached directory on stdout; progress goes to stderr. Further
+calls reuse the checkout when it already matches the resolved ref. If a requested
+ref cannot be fetched, the CLI reports the fallback to the default branch on stderr.
 
 ## Usage
 
@@ -46,35 +98,29 @@ source-fetch version              # print the version
 
 ## Skills
 
-source-fetch ships agent skills in two tiers, so instructions never go stale
-(the same design as [agent-browser](https://github.com/vercel-labs/agent-browser)):
-
-- **Discovery stub** (`skills/source-fetch/SKILL.md` in this repo) — install
-  it into your agent with `npx skills add zanza00/source-fetch`. It is a
-  thin, stable pointer: trigger words plus a redirect to the CLI command
-  below, and it rarely changes between releases.
-- **Bundled content** — the actual usage guide lives in the binary itself
-  (embedded at build time) and is served by the `skills` command, so it
-  always matches the installed version:
+The installed [agent skill](skills/source-fetch/SKILL.md) is a small discovery
+stub: it describes when to use source-fetch and points to the usage guide
+embedded in the CLI. This keeps operational instructions aligned with the binary
+instead of duplicating them in a separately installed skill.
 
 ```sh
 source-fetch skills list           # name + description of every skill
 source-fetch skills get core       # the core usage guide
 source-fetch skills get core --full  # include references/ and templates/
-source-fetch skills get --all      # every skill
+source-fetch skills get --all      # every visible skill
 ```
 
-All skills commands support `--json` for structured output. Set
-`$SOURCE_FETCH_SKILLS_DIR` to serve skill content from a directory instead
-of the embedded copy (development). See [`docs/skills.md`](docs/skills.md).
+All skills commands support `--json` for structured output.
+See [`docs/skills.md`](docs/skills.md) for the full command reference.
 
 ## Manifest
 
 Flat TOML, one `[source.<name>]` table per dependency. See
 [`docs/manifest.md`](docs/manifest.md) and [`manifest.example.toml`](manifest.example.toml).
 
-It is discovered by walking upward from `$PWD` for `.source-fetch.toml`, or set
-`$SOURCE_FETCH_MANIFEST` explicitly.
+Set `$SOURCE_FETCH_MANIFEST` explicitly, or let the CLI walk upward from `$PWD`
+for `.source-fetch.toml`, falling back to `~/.config/source-fetch/manifest.toml`.
+There is no built-in manifest; `manifest add` creates one if needed.
 
 ## One-off peek
 
@@ -94,29 +140,13 @@ for manifest entries; `.../source-fetch/adhoc/<name>` for one-off `peek` trees.
   `path-<hash>`.
 - Ad-hoc names are `<repo-basename>-<urlhash>`: same-named repos never collide.
 - Each tree is a plain git checkout with a `.source-fetch-ref` marker.
-- `$SOURCE_FETCH_CACHE` overrides the root entirely (no namespace), for tests/CI.
+- `$SOURCE_FETCH_CACHE` overrides the root entirely (no namespace).
 - The cache is safe to delete at any time; `clean` refuses to run on
   empty/`/`/`$HOME`. `clean` is manifest-scoped and leaves ad-hoc trees alone.
 
 ## Development
 
-```sh
-go build ./...
-go test ./...
-test/run.sh            # end-to-end smoke test using a local bare repo (offline)
-```
-
-## Layout
-
-```
-cmd/source-fetch/      entrypoint
-internal/cli/          command dispatch
-internal/manifest/     manifest model, load, discovery
-internal/resolve/      version detection + ref precedence
-internal/fetch/        fetch algorithm + at-ref fast path + marker
-internal/cache/        cache root, manifest-id, clean guards
-internal/git/          git subprocess wrapper
-```
+For development and contribution instructions, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
