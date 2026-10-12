@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,19 +12,23 @@ import (
 	"github.com/zanza00/source-fetch/internal/fetch"
 )
 
-// captureStdout runs f with os.Stdout redirected and returns what was printed.
+// captureStdout runs f with os.Stdout redirected and returns what was
+// printed. It writes to a temp file instead of an os.Pipe: a pipe with no
+// concurrent reader deadlocks on Windows once the output exceeds the small
+// pipe buffer (the embedded core SKILL.md does).
 func captureStdout(t *testing.T, f func()) string {
 	t.Helper()
 	old := os.Stdout
-	r, w, err := os.Pipe()
+	path := filepath.Join(t.TempDir(), "stdout")
+	tmp, err := os.Create(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	os.Stdout = w
+	os.Stdout = tmp
 	f()
-	_ = w.Close()
+	_ = tmp.Close()
 	os.Stdout = old
-	b, err := io.ReadAll(r)
+	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
