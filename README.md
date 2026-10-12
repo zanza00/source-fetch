@@ -23,7 +23,38 @@ adds the workflow to your agent. They currently require two installation steps.
 
 ### 1. Install the CLI
 
-With Go installed:
+Choose one of the following methods. Homebrew, mise, and eget install prebuilt
+binaries, so Go is not required.
+
+**Homebrew** (macOS or Linux):
+
+```sh
+brew install zanza00/tap/source-fetch
+```
+
+**[mise](https://mise.jdx.dev/dev-tools/backends/github.html)**:
+
+```sh
+mise use -g github:zanza00/source-fetch@latest
+```
+
+To pin a version for a project, add it to `mise.toml`:
+
+```toml
+[tools]
+"github:zanza00/source-fetch" = "0.4.1"
+```
+
+**[eget](https://github.com/zyedidia/eget)**:
+
+```sh
+mkdir -p ~/.local/bin
+eget zanza00/source-fetch --to ~/.local/bin
+```
+
+Keep `~/.local/bin` on `PATH`, or choose another directory with `--to`.
+
+**Go** (with Go installed):
 
 ```sh
 go install github.com/zanza00/source-fetch/cmd/source-fetch@latest
