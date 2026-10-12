@@ -46,6 +46,14 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      - name: Require Homebrew tap credentials
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo 'Configure the HOMEBREW_TAP_TOKEN Actions secret before releasing.' >&2
+            exit 1
+          fi
       - name: Publish release
         uses: goreleaser/goreleaser-action@v7
         with:
@@ -53,6 +61,7 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
       - name: Verify published release
         shell: bash
         env:

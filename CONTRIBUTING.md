@@ -123,6 +123,8 @@ After merging a PR and verifying CI on the exact `main` commit, a maintainer
 pushes a lightweight `vX.Y.Z` tag. The workflow checks that the commit belongs
 to `main`, runs the shared CI checks on it, and publishes only if they pass.
 It builds six archives (Linux/macOS/Windows, amd64/arm64) and `checksums.txt`.
+GoReleaser also updates the Homebrew tap using the `HOMEBREW_TAP_TOKEN` secret.
+See [distribution setup](docs/distribution.md) for credentials and local validation.
 
 Choose a minor bump for new features and a patch bump for fixes or maintenance.
 See [the release skill](.agents/skills/release/SKILL.md) for the procedure.

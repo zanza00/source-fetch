@@ -54,3 +54,6 @@ jobs:
             GOOS=$os GOARCH=amd64 go build -o /dev/null ./cmd/source-fetch
             GOOS=$os GOARCH=arm64 go build -o /dev/null ./cmd/source-fetch
           done
+      - name: Test Homebrew publisher
+        # Python is used only by the release publisher, not by the CLI.
+        run: python3 -m unittest discover -s scripts -p '*_test.py'
