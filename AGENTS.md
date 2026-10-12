@@ -8,7 +8,7 @@ vendoring it into the consuming repo. Checkouts are version-matched (pinned to
 the tag of the installed version when a `version_cmd` is configured),
 namespaced per manifest, and cacheable via a one-off `peek` command.
 
-- Language: Go 1.23 (module `github.com/zanza00/source-fetch`)
+- Language: Go 1.27.2 (module `github.com/zanza00/source-fetch`)
 - Single external dependency: `github.com/BurntSushi/toml`
 - Requires `git` on `PATH` (used as a subprocess wrapper)
 - Output discipline: plain directory on stdout, progress on stderr — keep it

@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Go 1.23 or later (see [go.mod](go.mod)).
+- Go 1.27.2 or later (see [go.mod](go.mod)).
 - `git` on `PATH`.
 - A POSIX shell for the offline smoke test.
 

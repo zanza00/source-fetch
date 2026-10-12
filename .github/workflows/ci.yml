@@ -5,8 +5,16 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -17,7 +25,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
       - name: Build
         run: go build ./...
       - name: Vet
@@ -30,12 +37,15 @@ jobs:
 
   cross:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
       - name: Cross-compile
+        env:
+          CGO_ENABLED: "0"
         run: |
           for os in linux darwin windows; do
             GOOS=$os GOARCH=amd64 go build -o /dev/null ./cmd/source-fetch
