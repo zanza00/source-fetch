@@ -1,62 +1,58 @@
 ---
 name: release
-description: Load this skill when cutting a release of source-fetch (versioning, tagging, goreleaser publish, verifying the GitHub release), or when the user asks to publish, tag, or ship a new version of this repo.
+description: Cut a source-fetch release by choosing a version, tagging verified main, and monitoring the GitHub Actions publication.
 metadata:
   internal: true
 ---
 
 # Release source-fetch
 
-Releases are built and published **locally** with goreleaser. There is no
-release workflow in CI (`.github/workflows/ci.yml` only runs tests and
-cross-compiles). Tags are lightweight. The release version is injected at build
-time via `cli.Version` (see `.goreleaser.yaml` `ldflags`).
+GitHub Actions builds and publishes releases through
+`.github/workflows/release.yml` when a lightweight `vX.Y.Z` tag is pushed.
+The workflow validates that the tagged commit belongs to `main`, runs the
+shared checks on that exact commit, and publishes with GoReleaser only after
+all checks pass. GoReleaser injects `cli.Version` from the tag.
 
-## Preconditions
+## Prepare
 
-- Working tree clean; all work committed and `main` up to date.
-- Green locally: `go build ./... && go vet ./... && go test ./... && test/run.sh`.
-- Decide the version (semver): new feature → bump minor (v0.1.2 → v0.2.0),
-  fix/chore → bump patch. Existing tags: `git tag -l`.
-- `gh` must be authenticated (`gh auth status`) — `GITHUB_TOKEN` is not in the
-  environment; extract it with `gh auth token`.
+- Fetch `origin` and tags, inspect `git status` and commits since the latest
+  release. Use a minor bump for features and a patch bump for fixes or
+  maintenance. The workflow supports only stable `vX.Y.Z` versions.
+- All changes must land through a PR with the required CI check green.
+  Do not push directly to protected `main`.
+- Release from a clean local `main` that matches `origin/main`. Update with
+  `git pull --ff-only origin main`; stop if the branch has unmerged local work.
+- Verify the `ci` run for the exact release commit is successful with
+  `gh run list --workflow ci.yml --commit <sha>` and `gh run view <run-id>`.
+  Wait for active runs; fix failures through another PR before releasing.
+- `gh` must be authenticated. No local token extraction or local GoReleaser
+  publication is needed.
 
-## Steps, in this exact order
+## Publish
 
-The order matters: goreleaser creates the **remote** tag at the remote
-default-branch HEAD when the tag is missing on the remote. If `main` has not
-been pushed yet, the remote tag lands on a stale commit and the release is
-broken (this happened with v0.2.0 and had to be repaired by hand).
+State the chosen version and that pushing its tag triggers publication of
+six platform archives and `checksums.txt`. Obtain authorization if the
+current conversation has not already authorized the release.
 
-1. `git push origin main` — push the code **first**.
-2. `git tag v0.x.y` (lightweight, matches existing tags).
-3. `git push origin v0.x.y` — so the remote tag exists before goreleaser runs
-   and cannot be recreated on the wrong commit.
-4. Publish: `GITHUB_TOKEN=$(gh auth token) goreleaser release --clean`
-   (same as `make release`). Requires a clean git tree. Builds
-   linux/darwin/windows amd64/arm64, archives, `checksums.txt`, changelog from
-   commit messages, publishes the GitHub Release.
-5. Verify:
-   - `gh release view v0.x.y` — not a draft, 7 assets (6 archives + checksums).
-   - `git ls-remote origin refs/tags/v0.x.y` — must point to the released
-     commit, not an older one.
-   - `git fetch --tags origin` — local and remote tags in sync.
+1. Record `git rev-parse HEAD` and check that the proposed tag does not exist
+   locally or remotely.
+2. Create a lightweight tag: `git tag vX.Y.Z <recorded-sha>`.
+3. Push only the tag: `git push origin vX.Y.Z`.
+4. Find the `release.yml` run for that tag and SHA, then monitor it with
+   `gh run watch <run-id> --exit-status`.
+5. Verify `gh release view vX.Y.Z`: published, not draft or prerelease,
+   seven assets (six archives plus `checksums.txt`). Check
+   `git ls-remote origin refs/tags/vX.Y.Z` matches the recorded SHA, and
+   `git fetch --tags origin` to synchronize tags.
 
-## Repair, if the remote tag points to the wrong commit
+## Failed releases
 
-goreleaser-built artifacts are always correct (they build from the local
-checkout and local tag); only the tag ref can be wrong. Move it with an
-expected-value lease:
+If validation or checks fail, publication is skipped. Fix code or workflow
+failures through a PR and release a new version after its CI passes; do not
+move existing release tags or publish locally to bypass the checks.
 
-```
-git push --force-with-lease=refs/tags/v0.x.y:<wrong-sha> origin refs/tags/v0.x.y
-```
-
-A GitHub Release attaches to the tag by name, so moving the tag ref keeps the
-release and its assets intact.
-
-## Authorization
-
-Pushing `main`, pushing a tag, and publishing a release are remote,
-hard-to-undo actions: get the user's go-ahead before step 1, and state the
-version and what will be published in one line.
+If publication fails transiently, inspect the run and any partial release
+before retrying. Rerun failed jobs for the same tag with
+`gh run rerun <run-id> --failed` when the retry is within the user's existing
+release authorization. Stop and report persistent failures rather than
+retrying indefinitely or deleting published assets without authorization.

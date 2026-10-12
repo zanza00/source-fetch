@@ -107,14 +107,28 @@ See [the skills documentation](docs/skills.md) for authoring details.
 
 Use Conventional Commits, such as `feat:`, `fix:`, `docs:`, `test:`, or
 `chore:`. Explain the problem, the resulting behavior, and the checks you
-ran in your pull request. Build, vet, unit tests, and the smoke test must
-all pass before submission.
+ran in your pull request. Work on a branch and open a PR into `main`;
+direct pushes to `main` are blocked. The required `CI required` check must
+pass before merging. No second reviewer approval is required.
+
+Build, vet, unit tests, and the smoke test must all pass before submission.
+The shared checks in `.github/workflows/checks.yml` run on PRs, on `main`
+after a merge, and on release tags.
 
 ## Release builds
 
-Release builds use [`.goreleaser.yaml`](.goreleaser.yaml). With GoReleaser
-installed, `make release` publishes a release; it is a maintainer operation.
-The generated `dist/` directory is ignored and must not be committed.
+Release builds use [`.goreleaser.yaml`](.goreleaser.yaml) and run on GitHub
+Actions through [the release workflow](.github/workflows/release.yml).
+After merging a PR and verifying CI on the exact `main` commit, a maintainer
+pushes a lightweight `vX.Y.Z` tag. The workflow checks that the commit belongs
+to `main`, runs the shared CI checks on it, and publishes only if they pass.
+It builds six archives (Linux/macOS/Windows, amd64/arm64) and `checksums.txt`.
+
+Choose a minor bump for new features and a patch bump for fixes or maintenance.
+See [the release skill](.agents/skills/release/SKILL.md) for the procedure.
+`make release-check` validates the GoReleaser configuration locally without
+publishing. The generated `dist/` directory is ignored and must not be
+committed.
 
 The release version is injected at build time using
 `-X github.com/zanza00/source-fetch/internal/cli.Version=<version>`.
