@@ -7,9 +7,9 @@ hidden: true
 # source-fetch
 
 Fetch the source code of a dependency on demand and cache it locally, so you
-can read it without vendoring it into the consuming repo. Checkouts are
-version-matched: pinned to the tag of the *installed* version when the
-manifest configures a `version_cmd`.
+can read it without vendoring it into the consuming repo. When the manifest
+configures `version_cmd`, it resolves a tag from the *installed* version.
+The core skill explains ref resolution and fallback behavior.
 
 Install: `go install github.com/zanza00/source-fetch/cmd/source-fetch@latest`
 (or grab a binary from the GitHub Releases page). Requires `git` on `PATH`.
@@ -21,12 +21,11 @@ This file is a discovery stub, not the usage guide. Before running any
 
 ```bash
 source-fetch skills get core             # commands, manifest format, troubleshooting
-source-fetch skills get core --full      # not needed for core (single file)
 ```
 
 The CLI serves skill content that always matches the installed version, so
-instructions never go stale. The content in this stub cannot change between
-releases, which is why it just points at `skills get core`.
+usage instructions stay aligned with the binary. This stub is kept minimal
+to reduce version drift; operational details live in `skills get core`.
 
 Run `source-fetch skills list` to see everything available on the installed
 version.
@@ -34,7 +33,7 @@ version.
 ## Why source-fetch
 
 - On demand only — nothing is fetched until asked.
-- Version-matched — the checkout follows the installed version's tag.
-- Namespaced cache — per-manifest, so two projects never collide.
+- Version-aware — resolve a tag from the installed version when configured.
+- Cached across runs — reuse dependency checkouts without vendoring them.
 - One-off `peek` — fetch any git URL once, in a separate ad-hoc cache.
 - Agent-friendly — plain directory on stdout, progress on stderr.

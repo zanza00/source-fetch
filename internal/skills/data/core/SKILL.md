@@ -7,18 +7,26 @@ description: How to use source-fetch. Use when the task involves fetching, readi
 
 `source-fetch` fetches the source code of a dependency on demand and caches it
 locally, so you can read it without vendoring it into the consuming repo.
-Checkouts are version-matched (pinned to the tag of the *installed* version
-when the manifest configures `version_cmd`), namespaced per manifest, and
-cached across runs.
+When the manifest configures `version_cmd`, source-fetch resolves a tag from
+the *installed* version. If the requested ref cannot be fetched, it warns on
+stderr and falls back to the default branch; verify the checkout when the
+exact version matters. Checkouts are namespaced per manifest and cached
+across runs, unless `$SOURCE_FETCH_CACHE` overrides the namespace.
 
 Output discipline: **the fetched directory on stdout, progress on stderr**.
 `cd` into it, grep it, or pass subpaths around.
 
 ## Start here
 
-Run `source-fetch list` (or bare `source-fetch`) in the project directory.
-It prints every manifest entry with version, ref, cache path and age. If it
-fails, no `.source-fetch.toml` manifest applies — see "Manifest" below.
+- For a configured dependency, run `source-fetch path <name>` directly.
+- To discover configured names, run `source-fetch list` (or bare
+  `source-fetch`) in the project directory. It prints version, resolved ref,
+  cache path and age; the ref column does not verify the cached checkout.
+- For a one-off investigation, use `source-fetch peek <url> [ref]`; no
+  manifest is needed.
+
+If a command fails, read the error. Create a manifest only when one is
+missing and you want a reusable entry — see "Adding an entry" below.
 
 ## Commands
 
@@ -46,17 +54,25 @@ source-fetch skills get core      # this content (always version-matched)
 2. Read files directly under that directory (grep, read, analyze).
 3. Never commit anything inside the cache — it is disposable.
 
+Each dependency (or peek URL) has one checkout directory. Fetching a
+different ref replaces that checkout, including local changes. Cached
+branches are not refreshed automatically; `update <name>` forces a fresh
+clone for a manifest entry. To refresh a peek tree, use `rm <url>` then
+`peek <url> [ref]`.
+
 ## Manifest
 
-Flat TOML, one `[source.<name>]` table per dependency, discovered by walking
-upward from `$PWD` for `.source-fetch.toml` (explicit via
-`$SOURCE_FETCH_MANIFEST`). Fields:
+Flat TOML, one `[source.<name>]` table per dependency. Discovery precedence:
+`$SOURCE_FETCH_MANIFEST` → nearest `.source-fetch.toml` walking upward from
+`$PWD` → `~/.config/source-fetch/manifest.toml`. An explicit missing path
+errors without falling back; project and global manifests are not merged.
+Fields:
 
 ```toml
 [source.chezmoi]
 url         = "https://github.com/twpayne/chezmoi.git"  # required
 version_cmd = "chezmoi --version"   # optional: command whose output has the version
-tag_prefix  = "v"                    # optional: string between version and tag
+tag_prefix  = "v"                    # optional: prepended to the detected version
 ref         = "v2.73.0"              # optional: persistent pin (wins over version_cmd)
 default_ref = "stable"               # optional: fallback when version unknown
 ```
@@ -76,21 +92,31 @@ but read it before trusting it.
 
 ## Cache
 
-`${SOURCE_FETCH_CACHE:-$XDG_CACHE_HOME|~/.cache}/source-fetch/<manifest-id>/<name>`;
-ad-hoc peek trees live under `.../source-fetch/adhoc/`. Each tree is a plain
-git checkout with a `.source-fetch-ref` marker. The cache is safe to delete
-at any time; `clean` refuses empty/`/`/`$HOME` targets and leaves ad-hoc
-trees alone. `$SOURCE_FETCH_CACHE` overrides the root (no namespace).
+By default, the base is `$XDG_CACHE_HOME` or the platform's user cache
+directory (`~/.cache` on Linux). Manifest trees live at
+`<base>/source-fetch/<manifest-id>/<name>`; peek trees live at
+`<base>/source-fetch/adhoc/<url-derived-name>`.
+
+With `$SOURCE_FETCH_CACHE`, manifest trees instead live at
+`<override>/<name>` and peek trees at `<override>/adhoc/<url-derived-name>`.
+There is no per-manifest namespace in this mode.
+
+Each tree is a plain git checkout with a `.source-fetch-ref` marker recording
+the requested ref, actual HEAD commit and fetch time. After a fallback, the
+recorded ref still names the requested ref; check HEAD to verify the version.
+The cache is disposable. `clean` refuses empty/`/`/`$HOME` targets and removes
+the current manifest's cache root. Normally peek trees are separate; with
+`$SOURCE_FETCH_CACHE`, `clean` also deletes the nested `adhoc` directory.
 
 ## Troubleshooting
 
 - "unknown source" — the name is not in the manifest; run `source-fetch list`.
-- No manifest found — walk up from `$PWD` finds nothing; `source-fetch
-  manifest add <name> <url>` creates `.source-fetch.toml` in the current
-  directory, or set `$SOURCE_FETCH_MANIFEST` to point at an existing file.
-- Checkout at the wrong version — the resolved ref is pinned by
-  `version_cmd`/`ref`; check precedence above, or pass an explicit ref:
-  `source-fetch <name> <ref>`.
+- No manifest found — neither the upward search nor the global fallback
+  found a file, or `$SOURCE_FETCH_MANIFEST` names a missing file. Use `peek`
+  for one-off reading, or `manifest add` for a reusable entry.
+- Checkout at the wrong version — check ref precedence and stderr for a
+  fallback warning. Pass an explicit ref with `source-fetch <name> <ref>`;
+  if exact matching matters, verify HEAD against the intended tag or commit.
 - Stale checkout — `update <name>` forces a fresh clone at the resolved ref.
 - `git` missing — source-fetch shells out to `git`; it must be on `PATH`.
 
@@ -105,10 +131,14 @@ source-fetch manifest set chezmoi ref=v2.73.0   # empty value clears: ref=
 source-fetch manifest rm chezmoi                 # cache untouched; use rm for that
 ```
 
-Then run `source-fetch list` to confirm the resolved ref before fetching.
+Then run `source-fetch list` to inspect the resolved ref before fetching.
 Prefer `version_cmd` over `ref` when the goal is "match what's installed
 here"; prefer `ref` for reproducible pins. `add` refuses to overwrite an
 existing entry without `--force`; `--global` targets the per-user manifest
-(`~/.config/source-fetch/manifest.toml`) instead of the project one. Every
-write re-encodes the whole file atomically (comments in a hand-written
-file are not preserved).
+(`~/.config/source-fetch/manifest.toml`). Without `--global`, writes target
+`$SOURCE_FETCH_MANIFEST` if set, otherwise the discovered manifest (including
+the global fallback), or create `.source-fetch.toml` in the current directory
+when none exists. Run `source-fetch manifest` to inspect an existing target;
+set `$SOURCE_FETCH_MANIFEST` to a project path to create a project manifest
+when a global one already exists. Every write re-encodes the whole file
+atomically (comments in a hand-written file are not preserved).
