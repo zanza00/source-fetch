@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -37,8 +38,47 @@ func TestVersionCommand(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
-	if got := strings.TrimSpace(out); got != Version {
-		t.Fatalf("version output = %q, want %q", got, Version)
+	if got := strings.TrimSpace(out); got != currentVersion() {
+		t.Fatalf("version output = %q, want %q", got, currentVersion())
+	}
+}
+
+func TestVersionString(t *testing.T) {
+	tests := []struct {
+		name     string
+		injected string
+		bi       *debug.BuildInfo
+		want     string
+	}{{
+		name:     "ldflags injected wins",
+		injected: "v0.3.0",
+		bi:       &debug.BuildInfo{Main: debug.Module{Version: "v0.2.0"}},
+		want:     "v0.3.0",
+	}, {
+		name:     "fallback to module version when dev",
+		injected: "dev",
+		bi:       &debug.BuildInfo{Main: debug.Module{Version: "v0.3.0"}},
+		want:     "v0.3.0",
+	}, {
+		name:     "local build stays dev",
+		injected: "dev",
+		bi:       &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}},
+		want:     "dev",
+	}, {
+		name:     "no build info stays dev",
+		injected: "dev",
+		bi:       nil,
+		want:     "dev",
+	}, {
+		name:     "empty module version stays dev",
+		injected: "dev",
+		bi:       &debug.BuildInfo{},
+		want:     "dev",
+	}}
+	for _, tt := range tests {
+		if got := versionString(tt.injected, tt.bi); got != tt.want {
+			t.Errorf("%s: versionString(%q, bi) = %q, want %q", tt.name, tt.injected, got, tt.want)
+		}
 	}
 }
 

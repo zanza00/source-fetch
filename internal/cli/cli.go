@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -22,9 +23,39 @@ import (
 const prog = "source-fetch"
 
 // Version is the release version. It is injected at build time with
-// -X github.com/zanza00/source-fetch/internal/cli.Version=... and defaults to
-// "dev" for plain `go build`/`go run`.
+// -X github.com/zanza00/source-fetch/internal/cli.Version=...; see
+// versionString for the fallbacks used when it is left at "dev".
 var Version = "dev"
+
+// buildInfo is a seam for tests. It returns nil when the binary carries no
+// build info.
+var buildInfo = func() *debug.BuildInfo {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return nil
+	}
+	return info
+}
+
+// versionString resolves the reported version: the ldflags-injected value
+// wins; otherwise a module-version build (`go install pkg@vX.Y.Z`, e.g. via
+// mise) falls back to the version recorded in the build info; plain local
+// builds report "dev" (or the VCS-derived version on toolchains that record
+// one, e.g. "v0.3.0+dirty").
+func versionString(injected string, bi *debug.BuildInfo) string {
+	if injected != "" && injected != "dev" {
+		return injected
+	}
+	if bi != nil && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		return bi.Main.Version
+	}
+	return "dev"
+}
+
+// currentVersion is what `version` prints.
+func currentVersion() string {
+	return versionString(Version, buildInfo())
+}
 
 // Run dispatches args and returns the process exit code.
 func Run(args []string) int {
@@ -289,7 +320,7 @@ func cmdClean(args []string) error {
 }
 
 func cmdVersion() error {
-	fmt.Println(Version)
+	fmt.Println(currentVersion())
 	return nil
 }
 
