@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/zanza00/source-fetch/internal/cache"
 	"github.com/zanza00/source-fetch/internal/fetch"
+	"github.com/zanza00/source-fetch/internal/git"
 	"github.com/zanza00/source-fetch/internal/manifest"
 	"github.com/zanza00/source-fetch/internal/resolve"
 )
@@ -40,6 +42,8 @@ func dispatch(args []string) error {
 		return cmdList()
 	case "path":
 		return cmdPath(args[1:])
+	case "peek":
+		return cmdPeek(args[1:])
 	case "update":
 		return cmdUpdate(args[1:])
 	case "rm":
@@ -139,6 +143,73 @@ func cmdPath(args []string) error {
 	return nil
 }
 
+// cmdPeek implements one-off fetches of URLs that live in no manifest: fetch
+// (into the ad-hoc cache) and print the directory. With no URL it lists the
+// ad-hoc cache.
+func cmdPeek(args []string) error {
+	root, err := cache.AdhocRoot()
+	if err != nil {
+		return err
+	}
+	if len(args) == 0 {
+		return listAdhoc(root)
+	}
+	url := args[0]
+	cliRef := ""
+	if len(args) > 1 {
+		cliRef = args[1]
+	}
+	e := &manifest.Entry{Name: cache.AdhocName(url), URL: url, Transport: "git"}
+	dir, err := fetch.Ensure(root, e, resolve.Ref(e, cliRef), false, progress)
+	if err != nil {
+		return err
+	}
+	fmt.Println(dir)
+	return nil
+}
+
+// listAdhoc prints every tree in the ad-hoc cache with its remote URL.
+func listAdhoc(root string) error {
+	dirs, err := os.ReadDir(root)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	names := []string{}
+	for _, d := range dirs {
+		if d.IsDir() && fetch.HasGit(filepath.Join(root, d.Name())) {
+			names = append(names, d.Name())
+		}
+	}
+	sort.Strings(names)
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tURL\tREF\tCACHE\tAGE")
+	for _, name := range names {
+		dir := filepath.Join(root, name)
+		url, err := git.RemoteURL(dir)
+		if err != nil || url == "" {
+			url = "-"
+		}
+		ref := "(default)"
+		age := "-"
+		if mk, ok := fetch.ReadMarker(dir); ok {
+			if mk.Ref != "" {
+				ref = mk.Ref
+			}
+			if mk.Fetched > 0 {
+				days := int(time.Since(time.Unix(mk.Fetched, 0)).Hours() / 24)
+				age = fmt.Sprintf("%dd", days)
+			}
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", name, url, ref, dir, age)
+	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	fmt.Printf("\ncache: %s\n", root)
+	return nil
+}
+
 func cmdUpdate(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("missing source name")
@@ -160,20 +231,36 @@ func cmdRm(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("missing source name")
 	}
-	name := args[0]
-	_, _, root, err := entry(name)
-	if err != nil {
-		return err
+	target := args[0]
+	var dir string
+	if looksLikeURL(target) {
+		root, err := cache.AdhocRoot()
+		if err != nil {
+			return err
+		}
+		dir = cache.Dir(root, cache.AdhocName(target))
+	} else {
+		_, _, root, err := entry(target)
+		if err != nil {
+			return err
+		}
+		dir = cache.Dir(root, target)
 	}
-	dir := cache.Dir(root, name)
 	if !fetch.HasGit(dir) {
-		return fmt.Errorf("%s is not cached", name)
+		return fmt.Errorf("%s is not cached", target)
 	}
 	if err := os.RemoveAll(dir); err != nil {
 		return err
 	}
-	progress("removed %s", name)
+	progress("removed %s", target)
 	return nil
+}
+
+// looksLikeURL decides whether rm's argument addresses an ad-hoc tree (a
+// remote-style URL) or a manifest name. Plain local paths are treated as
+// manifest names.
+func looksLikeURL(s string) bool {
+	return strings.Contains(s, "://") || strings.HasPrefix(s, "git@")
 }
 
 func cmdClean(args []string) error {
@@ -262,8 +349,10 @@ commands:
   (none) | list          list every manifest entry (version, ref, cache, age)
   path <name> [subpath]  ensure cached, print its directory (quiet stdout)
   <name> [ref]           ensure cached, print its directory (one-shot ref)
+  peek <url> [ref]       one-off fetch of a git URL in no manifest (ad-hoc cache)
+  peek                   list the ad-hoc cache
   update <name>          force a fresh clone at the resolved ref
-  rm <name>              delete one cached tree
+  rm <name> | <url>      delete one cached tree (manifest entry or ad-hoc)
   clean                  delete the cache for the current manifest
   manifest               print the manifest path in use
   version | --version    print the version

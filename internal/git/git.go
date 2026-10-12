@@ -48,3 +48,8 @@ func TopLevel(dir string) (string, bool) {
 func HeadCommit(dir string) (string, error) {
 	return Run(dir, "rev-parse", "HEAD")
 }
+
+// RemoteURL returns the origin remote URL of the repository at dir.
+func RemoteURL(dir string) (string, error) {
+	return Run(dir, "remote", "get-url", "origin")
+}

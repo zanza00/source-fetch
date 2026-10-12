@@ -7,7 +7,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/zanza00/source-fetch/internal/git"
 )
@@ -30,6 +32,34 @@ func Root(manifestPath string) (string, error) {
 		}
 		return abs, nil
 	}
+	base, err := userBase()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "source-fetch", ManifestID(manifestPath)), nil
+}
+
+// AdhocRoot returns the cache directory for one-off `peek` fetches. It is
+// independent of any manifest, so project `clean` never touches it.
+//
+// Precedence mirrors Root: $SOURCE_FETCH_CACHE/adhoc →
+// $XDG_CACHE_HOME/source-fetch/adhoc → <user cache>/source-fetch/adhoc.
+func AdhocRoot() (string, error) {
+	if v := os.Getenv(EnvCache); v != "" {
+		abs, err := filepath.Abs(v)
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(abs, "adhoc"), nil
+	}
+	base, err := userBase()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "source-fetch", "adhoc"), nil
+}
+
+func userBase() (string, error) {
 	base := os.Getenv("XDG_CACHE_HOME")
 	if base == "" {
 		uc, err := os.UserCacheDir()
@@ -38,7 +68,35 @@ func Root(manifestPath string) (string, error) {
 		}
 		base = uc
 	}
-	return filepath.Join(base, "source-fetch", ManifestID(manifestPath)), nil
+	return base, nil
+}
+
+// AdhocName derives the cache name for a one-off URL: the repo basename
+// (sanitised) plus the first 8 hex chars of sha256(url), so same-named repos
+// from different hosts never collide.
+func AdhocName(url string) string {
+	u := url
+	if i := strings.IndexAny(u, "?#"); i >= 0 {
+		u = u[:i]
+	}
+	u = strings.TrimSuffix(u, ".git")
+	base := path.Base(strings.TrimSuffix(u, "/"))
+	var b strings.Builder
+	for _, r := range base {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '.', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	name := strings.TrimLeft(b.String(), "-.")
+	if name == "" {
+		name = "src"
+	}
+	sum := sha256.Sum256([]byte(url))
+	return name + "-" + hex.EncodeToString(sum[:])[:8]
 }
 
 // ManifestID is a stable id of the repo owning the manifest: the basename of

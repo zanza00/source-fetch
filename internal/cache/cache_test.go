@@ -3,6 +3,7 @@ package cache
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -49,5 +50,44 @@ func TestRootHonoursEnvOverride(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("Root = %s, want %s", got, want)
+	}
+}
+
+func TestAdhocRootHonoursEnvOverride(t *testing.T) {
+	override := filepath.Join(t.TempDir(), "override")
+	t.Setenv(EnvCache, override)
+	got, err := AdhocRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	abs, err := filepath.Abs(override)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(abs, "adhoc"); got != want {
+		t.Fatalf("AdhocRoot = %s, want %s", got, want)
+	}
+}
+
+func TestAdhocName(t *testing.T) {
+	url := "https://github.com/vercel-labs/agent-browser.git"
+	got := AdhocName(url)
+	if !strings.HasPrefix(got, "agent-browser-") {
+		t.Fatalf("AdhocName = %q, want agent-browser-<hash> prefix", got)
+	}
+	if got != AdhocName(url) {
+		t.Fatalf("AdhocName not stable: %s vs %s", got, AdhocName(url))
+	}
+	// Same basename from a different host must not collide.
+	if other := AdhocName("https://example.com/agent-browser.git"); other == got {
+		t.Fatalf("same-named repos collide: %s", got)
+	}
+	// scp-style and query/fragment URLs sanitise to a filesystem-safe name.
+	weird := AdhocName("git@example.com:org/we ird.git?x=1")
+	if !strings.HasPrefix(weird, "we-ird-") {
+		t.Fatalf("AdhocName = %q, want sanitised we-ird-<hash> prefix", weird)
+	}
+	if AdhocName("https://example.com/") == "" {
+		t.Fatal("AdhocName should never be empty")
 	}
 }

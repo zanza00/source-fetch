@@ -63,7 +63,34 @@ pass "explicit ref"
 "$bin" list >/dev/null || fail "list"
 pass "list"
 
-# rm + clean
+# --- one-off peek (ad-hoc cache) --------------------------------------------
+adhoc_url="file://$bare"
+out_p="$("$bin" peek "$adhoc_url")"
+[ -d "$out_p/.git" ] || fail "peek did not produce a checkout"
+[ -f "$out_p/.source-fetch-ref" ] || fail "peek marker"
+pass "peek fetches a one-off URL"
+
+# peek needs no manifest: fast path with discovery forced to fail
+(cd "$tmp" && SOURCE_FETCH_MANIFEST=/nonexistent "$bin" peek "$adhoc_url") \
+  >/dev/null 2>&1 || fail "peek needs no manifest"
+pass "peek works without a manifest"
+
+out_p2="$("$bin" peek "$adhoc_url")"
+[ "$out_p" = "$out_p2" ] || fail "peek fast path"
+pass "peek offline fast path"
+
+out_p3="$("$bin" peek "$adhoc_url" v1.2.3)"
+[ "$out_p3" = "$out_p" ] || fail "peek explicit ref should reuse the cache"
+pass "peek with explicit ref"
+
+"$bin" peek | grep -q "$bare" || fail "peek list"
+pass "peek list"
+
+"$bin" rm "$adhoc_url" >/dev/null 2>&1
+[ ! -d "$out_p" ] || fail "peek rm"
+pass "peek rm"
+
+# --- rm + clean -------------------------------------------------------------
 "$bin" rm tool >/dev/null 2>&1
 [ ! -d "$out" ] || fail "rm did not delete"
 pass "rm"
