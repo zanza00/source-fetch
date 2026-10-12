@@ -133,6 +133,12 @@ func TestSaveKeepsPermissions(t *testing.T) {
 	if err := os.Chmod(path, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Windows represents writable files as 0666 even after Chmod(0600).
+	// Save must preserve the mode the platform actually reports.
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	m, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -144,8 +150,8 @@ func TestSaveKeepsPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("mode = %v, want 0600", info.Mode().Perm())
+	if info.Mode().Perm() != before.Mode().Perm() {
+		t.Fatalf("mode = %v, want %v", info.Mode().Perm(), before.Mode().Perm())
 	}
 }
 
