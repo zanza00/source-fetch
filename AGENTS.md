@@ -81,10 +81,16 @@ skills/source-fetch/   discovery stub (installed into agents via `npx skills add
 
 ## Build and Deployment
 
-- CI (`.github/workflows/ci.yml`): build, vet, test on ubuntu/macos/windows
-  matrix, plus a cross-compile job (linux/darwin/windows, amd64/arm64).
-  The smoke test runs on all OSes except Windows.
-- Releases use [goreleaser](https://goreleaser.com) (`make release`,
+- CI (`.github/workflows/ci.yml`) calls reusable `checks.yml`: build, vet,
+  test on ubuntu/macos/windows plus cross-compilation for amd64/arm64 and
+  GoReleaser configuration validation. Smoke tests skip Windows.
+- Work on a branch and open a PR into protected `main`. The `CI required`
+  check must pass; direct pushes are blocked and no reviewer approval is
+  required.
+- Releases (`.github/workflows/release.yml`) start on stable `vX.Y.Z` tags,
+  verify main ancestry, and run the same checks on the tagged commit before
+  GoReleaser publishes. Do not publish releases locally.
+- Releases use [goreleaser](https://goreleaser.com) (`make release-check`,
   config in `.goreleaser.yaml`): CGO disabled, stripped binaries, tar.gz
   archives (zip on Windows), checksums, CHANGELOG.
 - `dist/` (goreleaser output) is gitignored — never commit it.

@@ -1,4 +1,4 @@
-.PHONY: build test smoke vet fmt release
+.PHONY: build test smoke vet fmt release-check
 
 build:
 	go build -o source-fetch ./cmd/source-fetch
@@ -15,5 +15,5 @@ vet:
 fmt:
 	gofmt -w .
 
-release:
-	goreleaser release --clean
+release-check:
+	goreleaser check
