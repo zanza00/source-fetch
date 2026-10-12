@@ -21,5 +21,13 @@ archives:
 checksum:
   name_template: checksums.txt
 
+publishers:
+  - name: homebrew-tap
+    checksum: true
+    # The script publishes once for checksums.txt and ignores other artifacts.
+    cmd: python3 scripts/publish-homebrew.py --tag {{ .Tag }} --artifact {{ .ArtifactPath }}
+    env:
+      - GH_TOKEN={{ .Env.HOMEBREW_TAP_TOKEN }}
+
 changelog:
   sort: asc
