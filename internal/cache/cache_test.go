@@ -37,12 +37,17 @@ func TestManifestID(t *testing.T) {
 }
 
 func TestRootHonoursEnvOverride(t *testing.T) {
-	t.Setenv(EnvCache, "/tmp/override")
-	got, err := Root("/whatever/.source-fetch.toml")
+	override := filepath.Join(t.TempDir(), "override")
+	t.Setenv(EnvCache, override)
+	got, err := Root(filepath.Join(t.TempDir(), ".source-fetch.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "/tmp/override" {
-		t.Fatalf("Root = %s, want /tmp/override", got)
+	want, err := filepath.Abs(override)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("Root = %s, want %s", got, want)
 	}
 }
