@@ -1,6 +1,8 @@
 ---
 name: release
 description: Load this skill when cutting a release of source-fetch (versioning, tagging, goreleaser publish, verifying the GitHub release), or when the user asks to publish, tag, or ship a new version of this repo.
+metadata:
+  internal: true
 ---
 
 # Release source-fetch
