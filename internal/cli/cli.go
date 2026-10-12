@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"github.com/zanza00/source-fetch/internal/git"
 	"github.com/zanza00/source-fetch/internal/manifest"
 	"github.com/zanza00/source-fetch/internal/resolve"
+	"github.com/zanza00/source-fetch/internal/skills"
 )
 
 const prog = "source-fetch"
@@ -27,7 +29,9 @@ var Version = "dev"
 // Run dispatches args and returns the process exit code.
 func Run(args []string) int {
 	if err := dispatch(args); err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %s\n", prog, err)
+		if !errors.Is(err, errSilent) {
+			fmt.Fprintf(os.Stderr, "%s: %s\n", prog, err)
+		}
 		return 1
 	}
 	return 0
@@ -52,6 +56,8 @@ func dispatch(args []string) error {
 		return cmdClean(args[1:])
 	case "manifest":
 		return cmdManifest()
+	case "skills":
+		return cmdSkills(args[1:])
 	case "version", "--version", "-v":
 		return cmdVersion()
 	case "help", "-h", "--help":
@@ -355,13 +361,17 @@ commands:
   rm <name> | <url>      delete one cached tree (manifest entry or ad-hoc)
   clean                  delete the cache for the current manifest
   manifest               print the manifest path in use
+  skills | skills list   list skills served by this binary (name, description)
+  skills get <name>      print a skill's content (matches this version)
+  skills get --all       print every skill
   version | --version    print the version
   help | -h | --help     print this usage
 
 environment:
   %[2]s      explicit manifest path
   %[3]s          cache root override (no namespace)
+  %[4]s  serve skills from a directory instead of the embedded content
 
 The command prints a plain directory on stdout; progress goes to stderr.
-`, prog, manifest.EnvManifest, cache.EnvCache)
+`, prog, manifest.EnvManifest, cache.EnvCache, skills.EnvSkillsDir)
 }

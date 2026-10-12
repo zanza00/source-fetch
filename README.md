@@ -35,8 +35,34 @@ source-fetch rm chezmoi           # drop one cached tree
 source-fetch rm <url>             # drop one ad-hoc tree
 source-fetch clean                # drop the cache for the current manifest
 source-fetch manifest             # which manifest is in use
+source-fetch skills               # list skills served by this binary
+source-fetch skills get core      # print the core skill (usage guide)
 source-fetch version              # print the version
 ```
+
+## Skills
+
+source-fetch ships agent skills in two tiers, so instructions never go stale
+(the same design as [agent-browser](https://github.com/vercel-labs/agent-browser)):
+
+- **Discovery stub** (`skills/source-fetch/SKILL.md` in this repo) — install
+  it into your agent with `npx skills add zanza00/source-fetch`. It is a
+  thin, stable pointer: trigger words plus a redirect to the CLI command
+  below, and it rarely changes between releases.
+- **Bundled content** — the actual usage guide lives in the binary itself
+  (embedded at build time) and is served by the `skills` command, so it
+  always matches the installed version:
+
+```sh
+source-fetch skills list           # name + description of every skill
+source-fetch skills get core       # the core usage guide
+source-fetch skills get core --full  # include references/ and templates/
+source-fetch skills get --all      # every skill
+```
+
+All skills commands support `--json` for structured output. Set
+`$SOURCE_FETCH_SKILLS_DIR` to serve skill content from a directory instead
+of the embedded copy (development). See [`docs/skills.md`](docs/skills.md).
 
 ## Manifest
 

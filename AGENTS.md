@@ -68,6 +68,8 @@ internal/resolve/      version detection + ref precedence
 internal/fetch/        fetch algorithm + at-ref fast path + marker
 internal/cache/        cache root, manifest-id, clean guards
 internal/git/          git subprocess wrapper
+internal/skills/       skills served by the CLI (go:embed'd in data/)
+skills/source-fetch/   discovery stub (installed into agents via `npx skills add`)
 ```
 
 - Keep `main.go` minimal; all behavior belongs in `internal/`.
