@@ -40,7 +40,8 @@ func Root(manifestPath string) (string, error) {
 }
 
 // AdhocRoot returns the cache directory for one-off `peek` fetches. It is
-// independent of any manifest, so project `clean` never touches it.
+// independent of any manifest. Project `clean` leaves it alone unless
+// SOURCE_FETCH_CACHE is set, in which case it is nested in the override root.
 //
 // Precedence mirrors Root: $SOURCE_FETCH_CACHE/adhoc →
 // $XDG_CACHE_HOME/source-fetch/adhoc → <user cache>/source-fetch/adhoc.

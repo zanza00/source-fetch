@@ -8,8 +8,8 @@ Only the canonical `[source.*]` prefix is supported.
 url         = "https://github.com/twpayne/chezmoi.git"
 version_cmd = "chezmoi --version"   # optional; ""/omitted = no version detection
 tag_prefix  = "v"                    # optional; string between version and tag
-ref         = "v2.73.0"              # optional persistent pin (tag/branch/SHA)
-default_ref = "stable"               # optional fallback when version is unknown
+# ref       = "v2.73.0"              # optional: uncomment for a persistent pin
+# default_ref = "<tag-or-branch>"     # optional: use an existing ref in this repo
 ```
 
 ## Fields
@@ -51,9 +51,29 @@ you never hand-write TOML:
 ```sh
 source-fetch manifest add chezmoi https://github.com/twpayne/chezmoi.git \
   --version-cmd "chezmoi --version" --tag-prefix v
-source-fetch manifest set chezmoi ref=v2.73.0      # empty value clears: ref=
-source-fetch manifest rm chezmoi                   # cache untouched; see rm
+source-fetch list                                 # inspect the resolved ref
 ```
+
+For a persistent pin instead of installed-version matching, use
+`source-fetch manifest set chezmoi ref=v2.73.0`. Clear it with
+`source-fetch manifest set chezmoi ref=` to resume version detection.
+
+To remove only the manifest entry, keeping its cached checkout:
+
+```sh
+source-fetch manifest rm chezmoi
+```
+
+To remove both, delete the cached checkout while the entry still exists:
+
+```sh
+source-fetch rm chezmoi             # requires an existing cached checkout
+source-fetch manifest rm chezmoi
+```
+
+After `manifest rm`, `rm chezmoi` cannot resolve the removed entry. A retained
+checkout can be deleted manually or with `clean`, which removes the whole cache
+root for the manifest.
 
 - `add` refuses to overwrite an existing entry unless `--force` is given.
 - Writes target the manifest in use (`$SOURCE_FETCH_MANIFEST`, else the

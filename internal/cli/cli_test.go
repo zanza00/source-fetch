@@ -112,6 +112,29 @@ func silenceStderr(t *testing.T, f func()) {
 	os.Stderr = old
 }
 
+func captureStderr(t *testing.T, f func()) string {
+	t.Helper()
+	tmp, err := os.Create(filepath.Join(t.TempDir(), "stderr"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	os.Stderr = tmp
+	defer func() {
+		os.Stderr = old
+		_ = tmp.Close()
+	}()
+	f()
+	if err := tmp.Close(); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(tmp.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
 func gitT(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
@@ -299,5 +322,52 @@ func TestManifestAddSetRm(t *testing.T) {
 	run(1, "manifest", "rm", "x")
 	if _, err := os.Stat(missing); !os.IsNotExist(err) {
 		t.Fatalf("rm created %s", missing)
+	}
+}
+
+func TestManifestRemovalWorkflows(t *testing.T) {
+	bare := makeBareRepo(t)
+	for _, removeCache := range []bool{false, true} {
+		name := "keep checkout"
+		if removeCache {
+			name = "remove checkout first"
+		}
+		t.Run(name, func(t *testing.T) {
+			manifestPath := filepath.Join(t.TempDir(), manifest.CanonicalName)
+			root := t.TempDir()
+			t.Setenv(manifest.EnvManifest, manifestPath)
+			t.Setenv(cache.EnvCache, root)
+			run := func(args ...string) string {
+				t.Helper()
+				var code int
+				var stderr string
+				captureStdout(t, func() {
+					stderr = captureStderr(t, func() { code = Run(args) })
+				})
+				if code != 0 {
+					t.Fatalf("Run(%v) = %d: %s", args, code, stderr)
+				}
+				return stderr
+			}
+			run("manifest", "add", "tool", bare)
+			run("path", "tool")
+			if removeCache {
+				run("rm", "tool")
+			}
+			stderr := run("manifest", "rm", "tool")
+			if !strings.Contains(stderr, "cache untouched") || strings.Contains(stderr, "use rm") {
+				t.Fatalf("manifest rm gives misleading cache advice: %q", stderr)
+			}
+			m, err := manifest.Load(manifestPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := m.Lookup("tool"); ok {
+				t.Fatal("manifest entry remains after removal")
+			}
+			if got := fetch.HasGit(cache.Dir(root, "tool")); got != !removeCache {
+				t.Fatalf("checkout exists = %v, want %v", got, !removeCache)
+			}
+		})
 	}
 }

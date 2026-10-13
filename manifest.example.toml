@@ -10,11 +10,13 @@ url = "https://github.com/twpayne/chezmoi.git"
 version_cmd = "chezmoi --version"
 tag_prefix = "v"
 
-# A tool whose tags have no "v" prefix.
-[source.television]
-url = "https://github.com/alexpasmantier/television.git"
-version_cmd = "television --version"
-tag_prefix = ""
+# A frontend project's formatter and linter, installed with
+# `pnpm add -D -E @biomejs/biome`. Run source-fetch from the project root
+# to resolve the local Biome version to its @biomejs/biome@<version> tag.
+[source.biome]
+url = "https://github.com/biomejs/biome.git"
+version_cmd = "pnpm exec biome --version"
+tag_prefix = "@biomejs/biome@"
 
 # A persistent pin: `ref` always wins over version detection.
 [source.pinned-tool]

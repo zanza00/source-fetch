@@ -42,9 +42,10 @@ work with dependency sources, load the actual workflow content:
 source-fetch skills get core             # commands, manifest format, troubleshooting
 ```
 
-The CLI serves skill content that always matches the installed version, so
-usage instructions stay aligned with the binary. This stub is kept minimal
-to reduce version drift; operational details live in `skills get core`.
+By default, the CLI serves skill content bundled with the installed version.
+`SOURCE_FETCH_SKILLS_DIR` can replace it with a local directory for development;
+ensure that override is intended when relying on the guide. This stub is kept
+minimal to reduce version drift; operational details live in `skills get core`.
 
 Run `source-fetch skills list` to see everything available on the installed
 version.
