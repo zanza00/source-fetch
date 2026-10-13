@@ -9,10 +9,13 @@ tags: []
 > helper out of the dotfiles repo into a standalone, general-purpose project named
 > **`source-fetch`**, and adapting the dotfiles repo to consume it.
 >
-> **Status:** the implementation below is the *current, working* `ctx` helper
-> (bash, single file). This document is a complete description of its behaviour,
-> not a wish-list — treat it as the source of truth to port, then apply the
-> rename map and the future-proofing notes.
+> **Status:** historical snapshot of the original `ctx` helper (bash, single
+> file), retained as background for the extraction. Its examples and acceptance
+> criteria do not describe the current Go CLI: `[tool.*]`, legacy manifest
+> discovery, bash parsing, and compatibility migrations are unsupported.
+> [The implementation plan](plan.md) records the decisions that superseded this
+> spec. For current commands and examples, use the [README](../README.md),
+> [manifest reference](manifest.md), and `source-fetch skills get core`.
 
 ---
 

@@ -105,12 +105,15 @@ ref cannot be fetched, the CLI reports the fallback to the default branch on std
 
 ## Usage
 
+These are independent command examples. Named sources must already be in your
+manifest; the quick start above and `manifest.example.toml` configure `chezmoi`.
+
 ```
 source-fetch                      # list every entry: versions, refs, cache
-source-fetch path topgrade        # fetch if needed, print dir (quiet stdout)
-source-fetch path bazzite just/   # print a subpath inside the cached tree
+source-fetch path chezmoi         # fetch if needed, print dir (quiet stdout)
+source-fetch path chezmoi <subpath> # print a subpath inside the cached tree
 cd "$(source-fetch path chezmoi)" # read the source
-source-fetch react v18.3.1        # one-shot explicit ref
+source-fetch chezmoi v2.73.0       # ref override for this call
 source-fetch peek <url> [ref]     # one-off fetch of any git URL (ad-hoc cache)
 source-fetch peek                 # list ad-hoc cached trees
 source-fetch update chezmoi       # force re-clone at the resolved (pinned) ref
@@ -126,6 +129,10 @@ source-fetch skills               # list skills served by this binary
 source-fetch skills get core      # print the core skill (usage guide)
 source-fetch version              # print the version
 ```
+
+An explicit ref leaves that checkout cached without editing the manifest. If
+the manifest resolves to the default branch (empty ref), `path` reuses it;
+use `update <name>` to restore the default branch.
 
 ## Skills
 
@@ -164,8 +171,14 @@ the repo, but read it before trusting it.
 
 ## Cache
 
-`${SOURCE_FETCH_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/source-fetch}/<manifest-id>/<name>`
-for manifest entries; `.../source-fetch/adhoc/<name>` for one-off `peek` trees.
+By default, `<base>` is `$XDG_CACHE_HOME` or the platform's user cache directory:
+`~/.cache` on Linux, `~/Library/Caches` on macOS, and `%LocalAppData%` on Windows.
+Manifest entries live at `<base>/source-fetch/<manifest-id>/<name>`;
+one-off `peek` trees live at `<base>/source-fetch/adhoc/<repo-basename>-<urlhash>`.
+
+With `$SOURCE_FETCH_CACHE`, entries instead live at `<override>/<name>` and
+peek trees at `<override>/adhoc/<repo-basename>-<urlhash>`, without a per-manifest
+namespace.
 
 - `<manifest-id>` is the basename of the git toplevel owning the manifest, else
   `path-<hash>`.
@@ -173,7 +186,8 @@ for manifest entries; `.../source-fetch/adhoc/<name>` for one-off `peek` trees.
 - Each tree is a plain git checkout with a `.source-fetch-ref` marker.
 - `$SOURCE_FETCH_CACHE` overrides the root entirely (no namespace).
 - The cache is safe to delete at any time; `clean` refuses to run on
-  empty/`/`/`$HOME`. `clean` is manifest-scoped and leaves ad-hoc trees alone.
+  empty/`/`/`$HOME`. Normally `clean` removes only the current manifest's cache;
+  with `$SOURCE_FETCH_CACHE`, it removes the entire override, including `adhoc/`.
 
 ## Development
 

@@ -31,8 +31,8 @@ func printJSON(v interface{}) error {
 }
 
 // cmdSkills dispatches the skills subcommand: list (default) and get.
-// Content is served from the binary itself, so it always matches the
-// installed version.
+// Content is served from the binary by default; EnvSkillsDir can override it
+// with filesystem content for development.
 func cmdSkills(args []string) error {
 	jsonMode := false
 	rest := []string{}

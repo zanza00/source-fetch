@@ -6,11 +6,11 @@
 //   - skills/source-fetch/ at the repo root — the discovery stub installed
 //     into agents by external tooling (`npx skills add zanza00/source-fetch`).
 //     It is intentionally thin and stable: trigger words plus a pointer to
-//     `source-fetch skills get core`. It never changes between releases, so
-//     agents installed long ago are not left with stale instructions.
+//     `source-fetch skills get core`. Operational guidance lives in the binary
+//     to reduce drift when agents retain an older discovery stub.
 //   - data/ here — the runtime skill content embedded in the binary and
-//     served by the `skills` command. It always matches the installed
-//     version, so instructions never drift from the CLI behavior.
+//     served by the `skills` command by default. EnvSkillsDir can override it
+//     with filesystem content for development.
 package skills
 
 import (

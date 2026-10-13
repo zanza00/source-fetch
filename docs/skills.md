@@ -3,8 +3,8 @@
 source-fetch ships agent skills in two tiers, mirroring the design of
 [agent-browser](https://github.com/vercel-labs/agent-browser). The split
 solves the version-drift problem: the skill installed in an agent is a thin
-stub that almost never changes, while the CLI always serves usage content
-matching its own version.
+stub that almost never changes, while the CLI serves usage content bundled
+with its own version by default.
 
 ## Discovery stub (`skills/`)
 
@@ -23,8 +23,8 @@ installed it long ago is never left with stale instructions.
 ## Bundled content (`source-fetch skills`)
 
 The actual usage guide is embedded in the binary at build time
-(`internal/skills/data/`) and served by the `skills` command. Because it
-ships inside the binary, it always matches the installed version:
+(`internal/skills/data/`) and served by the `skills` command. By default,
+the guide comes from the installed binary:
 
 | Command | Description |
 |---|---|
@@ -40,6 +40,7 @@ redirect to a real skill without polluting listings.
 
 `$SOURCE_FETCH_SKILLS_DIR` points the command at a filesystem directory
 instead of the embedded copy (development and testing).
+With this override, the content may differ from the installed CLI version.
 
 ## Authoring
 

@@ -548,7 +548,7 @@ func cmdManifestRm(args []string) error {
 		return err
 	}
 	if len(pos) != 1 {
-		return fmt.Errorf("usage: manifest rm <name> (removes the manifest entry; the cache is untouched, use rm <name> for that)")
+		return fmt.Errorf("usage: manifest rm <name> (removes the manifest entry; to also delete its cached checkout, run rm <name> first)")
 	}
 	name := pos[0]
 	path, err := manifestWritePath(flags["global"] == "true")
@@ -579,7 +579,7 @@ func cmdManifestRm(args []string) error {
 	if err := m.Save(); err != nil {
 		return err
 	}
-	progress("removed %s from %s (cache untouched; use rm %s to drop it)", name, path, name)
+	progress("removed %s from %s (cache untouched)", name, path)
 	return nil
 }
 
