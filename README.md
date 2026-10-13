@@ -108,7 +108,7 @@ ref cannot be fetched, the CLI reports the fallback to the default branch on std
 ```
 source-fetch                      # list every entry: versions, refs, cache
 source-fetch path topgrade        # fetch if needed, print dir (quiet stdout)
-source-fetch path aurora just/    # print a subpath inside the cached tree
+source-fetch path bazzite just/   # print a subpath inside the cached tree
 cd "$(source-fetch path chezmoi)" # read the source
 source-fetch react v18.3.1        # one-shot explicit ref
 source-fetch peek <url> [ref]     # one-off fetch of any git URL (ad-hoc cache)
