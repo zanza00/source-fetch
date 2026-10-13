@@ -22,8 +22,8 @@ url = "https://github.com/example/pinned-tool.git"
 ref = "v1.2.3"
 
 # No version detection: `default_ref` is used, else the default branch.
-[source.aurora]
-url = "https://github.com/ublue-os/aurora.git"
+[source.bazzite]
+url = "https://github.com/ublue-os/bazzite.git"
 default_ref = "stable"
 
 # Minimal entry: always the default branch.

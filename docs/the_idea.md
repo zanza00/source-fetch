@@ -45,7 +45,7 @@ Core behaviours:
 ### Why it exists (origin)
 
 In the dotfiles repo `ctx` replaces ~250 MB of git submodules (tool sources +
-the bazzite/aurora OS repos) that were previously vendored. Submodules made every
+the bazzite OS repos) that were previously vendored. Submodules made every
 `chezmoi update` heavy and required re-pinning after every tool upgrade. The
 on-demand cache keeps the repo light and removes the fragile submodule checkout
 issues. `source-fetch` is the same mechanism, promoted to a general tool.
@@ -102,7 +102,7 @@ Errors: `die()` prints `source-fetch: <message>` to stderr and exits `1`. Progre
 ```bash
 source-fetch                       # list everything: versions, refs, cache
 source-fetch path topgrade         # fetch if needed, print dir (quiet stdout)
-source-fetch path aurora just/     # print a subpath inside the cached tree
+source-fetch path bazzite just/    # print a subpath inside the cached tree
 cd "$(source-fetch path chezmoi)"  # read the source
 source-fetch react v18.3.1         # one-shot explicit ref
 source-fetch update chezmoi        # force re-clone at the resolved (pinned) ref
@@ -308,9 +308,8 @@ kinds:
 | rtk | https://github.com/rtk-ai/rtk.git | `rtk --version` | `v` |
 | hammerspoon | https://github.com/hammerspoon/hammerspoon.git | `""` (macOS) | `""` |
 | bazzite | https://github.com/ublue-os/bazzite.git | `""` (OS repo) | `""` |
-| aurora | https://github.com/ublue-os/aurora.git | `""` (OS repo) | `""` |
 
-Non-git or non-CLI entries (`hammerspoon`, `bazzite`, `aurora`) rely on the default
+Non-git or non-CLI entries (`hammerspoon`, `bazzite`) rely on the default
 branch — the pattern to keep in mind when adding "library/component-library" entries
 for other repos.
 
