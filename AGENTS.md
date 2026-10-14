@@ -112,5 +112,5 @@ skills/source-fetch/   discovery stub (installed into agents via `npx skills add
   `docs/manifest.md` and `manifest.example.toml`.
 - The cache layout is documented in `README.md`; `clean` has safety guards
   (refuses empty/`/`/`$HOME`) — preserve them when touching `internal/cache`.
-- Design notes live in `docs/` (`plan.md`, `the_idea.md`, `transports.md`,
+- Design notes live in `docs/` (`the_idea.md`, `transports.md`,
   `manifest.md`) — consult them before changing core fetch/resolve behavior.
