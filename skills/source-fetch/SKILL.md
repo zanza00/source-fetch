@@ -11,27 +11,16 @@ can read it without vendoring it into the consuming repo. When the manifest
 configures `version_cmd`, it resolves a tag from the *installed* version.
 The core skill explains ref resolution and fallback behavior.
 
-## Prerequisites and installation
+## Prerequisites
 
-Requires `source-fetch` and `git` on `PATH`. If the CLI is missing, choose an
-installation method already available in the environment:
+Requires `source-fetch` and `git` on `PATH`. If missing, install:
 
-| Method | Command |
-|---|---|
-| Homebrew (macOS/Linux) | `brew install zanza00/tap/source-fetch` |
-| mise | `mise use -g github:zanza00/source-fetch@latest` |
-| eget | `eget zanza00/source-fetch --to ~/.local/bin` |
-| Go | `go install github.com/zanza00/source-fetch/cmd/source-fetch@latest` |
+- Homebrew: `brew install zanza00/tap/source-fetch`
+- Go (any OS): `go install github.com/zanza00/source-fetch/cmd/source-fetch@latest`
+- Other methods and PATH notes: see the
+  [installation guide](https://github.com/zanza00/source-fetch#1-install-the-cli)
 
-For eget, create `~/.local/bin` first and keep it on `PATH`. For Go, keep
-`$(go env GOPATH)/bin` on `PATH`, or `$GOBIN` if configured. Homebrew installs
-the Git dependency; the other methods require Git separately.
-
-Alternatively, download a binary from
-[GitHub Releases](https://github.com/zanza00/source-fetch/releases) and put it
-on `PATH`. See the [installation guide](https://github.com/zanza00/source-fetch#1-install-the-cli)
-for details. Verify `source-fetch version` after installation, then load the
-core skill below.
+Verify with `source-fetch version`, then load the core skill below.
 
 ## Start here
 
