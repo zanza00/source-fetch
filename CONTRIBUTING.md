@@ -84,8 +84,8 @@ on stderr. Preserve that contract so scripts and agents can use the output.
 Preserve the safety guards in cache cleanup, including rejection of empty,
 root, and home-directory paths.
 
-Before changing fetch or ref resolution, consult [the design plan](docs/plan.md),
-[the original design](docs/the_idea.md), [transports](docs/transports.md), and
+Before changing fetch or ref resolution, consult
+[the design rationale](docs/the_idea.md), [transports](docs/transports.md), and
 [the manifest reference](docs/manifest.md).
 
 ## Working on the skill
