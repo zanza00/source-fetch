@@ -62,23 +62,25 @@ func TestDiscoverEmbedded(t *testing.T) {
 	if len(found) == 0 {
 		t.Fatal("expected embedded skills, got none")
 	}
-	var core *Skill
-	for i := range found {
-		if found[i].Name == "core" {
-			core = &found[i]
+	byName := map[string]Skill{}
+	for _, s := range found {
+		byName[s.Name] = s
+	}
+	for _, name := range []string{"core", "read", "manifest"} {
+		s, ok := byName[name]
+		if !ok {
+			t.Errorf("%s skill not discovered, got %v", name, found)
+			continue
 		}
-	}
-	if core == nil {
-		t.Fatalf("core skill not discovered, got %v", found)
-	}
-	if core.Hidden {
-		t.Error("core skill must not be hidden")
-	}
-	if core.Description == "" {
-		t.Error("core skill has no description")
-	}
-	if core.Dir != "embedded" {
-		t.Errorf("Dir = %q, want %q", core.Dir, "embedded")
+		if s.Hidden {
+			t.Errorf("%s skill must not be hidden", name)
+		}
+		if s.Description == "" {
+			t.Errorf("%s skill has no description", name)
+		}
+		if s.Dir != "embedded" {
+			t.Errorf("%s Dir = %q, want %q", name, s.Dir, "embedded")
+		}
 	}
 }
 

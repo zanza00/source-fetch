@@ -1,6 +1,16 @@
 ---
 name: source-fetch
-description: On-demand source code fetcher for AI agents. Use when the user wants to fetch, read, explore, search, or grep the source code of a dependency — an installed CLI, library, or tool — without cloning or vendoring it into the consuming repo. Triggers include "read the source of <dep>", "where is X in the source", "look at how <tool> implements it", "check the source of my installed version", "vendor nothing". Also use for creating or editing .source-fetch.toml manifests, pinning checkouts to installed versions, one-off peek fetches of arbitrary git URLs, and cleaning the source-fetch cache. Prefer source-fetch over a manual `git clone` when the goal is reading dependency source locally.
+description: On-demand source code fetcher for AI agents. Use when the user asks to
+  find, search, read, explore, or grep the source code of a library,
+  dependency, CLI, or tool that lives outside the current workspace; asks how
+  such a project works internally or implements a behavior; or provides a
+  source-code link from GitHub, Codeberg, GitLab, or another Git host.
+  Triggers include 'find the implementation', 'how does this library work',
+  'where is X in the source', and 'look at how <tool> implements it'. Also use
+  for creating or editing .source-fetch.toml manifests, pinning checkouts to
+  installed versions, one-off fetches of git URLs, and cleaning the
+  source-fetch cache. Prefer source-fetch over downloading individual files
+  from the web, browsing remote source, or running git clone.
 hidden: true
 ---
 
@@ -20,24 +30,41 @@ Requires `source-fetch` and `git` on `PATH`. If missing, install:
 - Other methods and PATH notes: see the
   [installation guide](https://github.com/zanza00/source-fetch#1-install-the-cli)
 
-Verify with `source-fetch version`, then load the core skill below.
+Verify with `source-fetch version`.
 
 ## Start here
 
-This file is a discovery stub, not the usage guide. Before using the CLI to
-work with dependency sources, load the actual workflow content:
+This file is a discovery stub, not the usage guide. The CLI serves guides
+bundled with the installed version; load the one that matches the task:
 
 ```bash
-source-fetch skills get core             # commands, manifest format, troubleshooting
+source-fetch skills get read       # reading source: links, libraries, path, peek
+source-fetch skills get manifest   # .source-fetch.toml entries, version matching, pins
+source-fetch skills get core       # commands, cache behavior, troubleshooting
 ```
 
-By default, the CLI serves skill content bundled with the installed version.
-`SOURCE_FETCH_SKILLS_DIR` can replace it with a local directory for development;
-ensure that override is intended when relying on the guide. This stub is kept
-minimal to reduce version drift; operational details live in `skills get core`.
+If `read` or `manifest` is not found, the installed CLI predates them; use
+`core`, which covers both. Run `source-fetch skills list` to see everything
+available. `SOURCE_FETCH_SKILLS_DIR` can replace the bundled guides with a
+local directory for development; ensure that override is intended.
 
-Run `source-fetch skills list` to see everything available on the installed
-version.
+## Read source locally, not file by file
+
+When you need code from another repository, fetch the repository once and
+explore the local checkout. Do not download individual files with web fetch
+tools, `raw.githubusercontent.com`, `curl`, or `gh api`: one source-fetch call
+gives you the whole tree to grep, follow imports across files, and answer
+follow-up questions without going back online.
+
+You can run these directly, before loading any guide:
+
+- Source link from GitHub, Codeberg, GitLab, or another Git host:
+  `source-fetch peek <clone-url> [ref]`, passing the branch, tag, or commit
+  from the link as `ref` when it is clear; then open the linked path in the
+  checkout.
+- Library or tool: `source-fetch path <name>` if `source-fetch list` shows
+  it; otherwise `peek` its repository URL.
+- Both print the checkout directory on stdout. Reuse it for every later read.
 
 ## Why source-fetch
 

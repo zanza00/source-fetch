@@ -91,14 +91,14 @@ Before changing fetch or ref resolution, consult
 ## Working on the skill
 
 The discovery skill in `skills/source-fetch/SKILL.md` describes when to use
-source-fetch and points to `source-fetch skills get core`. Keep it small;
-operational instructions belong in `internal/skills/data/core/`, where they
-are embedded in the binary and released with the CLI.
+source-fetch and points to the bundled guides (`read`, `manifest`, `core`).
+Keep it small; operational instructions belong in `internal/skills/data/`,
+where they are embedded in the binary and released with the CLI.
 
 To preview edited bundled content without rebuilding:
 
 ```sh
-SOURCE_FETCH_SKILLS_DIR=internal/skills/data source-fetch skills get core --full
+SOURCE_FETCH_SKILLS_DIR=internal/skills/data source-fetch skills get --all
 ```
 
 See [the skills documentation](docs/skills.md) for authoring details.
