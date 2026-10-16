@@ -5,8 +5,8 @@
 //
 //   - skills/source-fetch/ at the repo root — the discovery stub installed
 //     into agents by external tooling (`npx skills add zanza00/source-fetch`).
-//     It is intentionally thin and stable: trigger words plus a pointer to
-//     `source-fetch skills get core`. Operational guidance lives in the binary
+//     It is intentionally thin and stable: trigger words plus pointers to the
+//     bundled guides (read, manifest, core). Operational guidance lives in the binary
 //     to reduce drift when agents retain an older discovery stub.
 //   - data/ here — the runtime skill content embedded in the binary and
 //     served by the `skills` command by default. EnvSkillsDir can override it
