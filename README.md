@@ -73,9 +73,11 @@ With Node.js/npm available, run:
 npx skills add zanza00/source-fetch
 ```
 
-Select your coding agent in the installer. The skill tells it to load
-`source-fetch skills get core` before using the CLI, so the usage instructions
-come from your installed binary. Updating the CLI also updates that bundled guide.
+Select your coding agent in the installer. The skill tells it to fetch whole
+repositories and read them locally, and to load the guides bundled with the CLI
+(`source-fetch skills get read`, `manifest`, or `core`), so the usage
+instructions come from your installed binary. Updating the CLI also updates
+those bundled guides.
 
 The CLI also works directly from a terminal without an agent skill.
 
@@ -126,7 +128,7 @@ source-fetch manifest add <name> <url> [--version-cmd <cmd> ...]
 source-fetch manifest set <name> key=value  # update fields (empty value clears)
 source-fetch manifest rm <name>    # remove an entry (cache untouched)
 source-fetch skills               # list skills served by this binary
-source-fetch skills get core      # print the core skill (usage guide)
+source-fetch skills get read      # print the guide for reading source
 source-fetch version              # print the version
 ```
 
@@ -137,13 +139,15 @@ use `update <name>` to restore the default branch.
 ## Skills
 
 The installed [agent skill](skills/source-fetch/SKILL.md) is a small discovery
-stub: it describes when to use source-fetch and points to the usage guide
+stub: it describes when to use source-fetch and points to the usage guides
 embedded in the CLI. This keeps operational instructions aligned with the binary
 instead of duplicating them in a separately installed skill.
 
 ```sh
 source-fetch skills list           # name + description of every skill
-source-fetch skills get core       # the core usage guide
+source-fetch skills get read       # reading source: path, peek, refs
+source-fetch skills get manifest   # manifests, version matching, pins
+source-fetch skills get core       # commands, cache behavior, troubleshooting
 source-fetch skills get core --full  # include references/ and templates/
 source-fetch skills get --all      # every visible skill
 ```

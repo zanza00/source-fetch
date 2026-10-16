@@ -3,7 +3,7 @@
 > **Status:** historical note. This file records *why* `source-fetch` exists,
 > not *how it works*. For current commands and behavior use the
 > [README](../README.md), the [manifest reference](manifest.md), and
-> `source-fetch skills get core`.
+> `source-fetch skills get --all`.
 
 ## What the tool is
 
