@@ -2,12 +2,14 @@
 package cli
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime/debug"
-	"sort"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -208,7 +210,7 @@ func cmdPeek(args []string) error {
 // listAdhoc prints every tree in the ad-hoc cache with its remote URL.
 func listAdhoc(root string) error {
 	dirs, err := os.ReadDir(root)
-	if err != nil && !os.IsNotExist(err) {
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	names := []string{}
@@ -217,22 +219,21 @@ func listAdhoc(root string) error {
 			names = append(names, d.Name())
 		}
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "NAME\tURL\tREF\tCACHE\tAGE")
 	for _, name := range names {
 		dir := filepath.Join(root, name)
 		url, err := git.RemoteURL(dir)
-		if err != nil || url == "" {
-			url = "-"
+		if err != nil {
+			url = ""
 		}
+		url = cmp.Or(url, "-")
 		ref := "(default)"
 		age := "-"
 		if mk, ok := fetch.ReadMarker(dir); ok {
-			if mk.Ref != "" {
-				ref = mk.Ref
-			}
+			ref = cmp.Or(mk.Ref, ref)
 			if mk.Fetched > 0 {
 				days := int(time.Since(time.Unix(mk.Fetched, 0)).Hours() / 24)
 				age = fmt.Sprintf("%dd", days)
@@ -411,7 +412,7 @@ func manifestWritePath(global bool) (string, error) {
 func loadForEdit(path string) (*manifest.Manifest, error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return &manifest.Manifest{Path: path}, nil
 		}
 		return nil, err
@@ -556,7 +557,7 @@ func cmdManifestRm(args []string) error {
 		return err
 	}
 	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("no manifest at %s", path)
 		}
 		return err
@@ -565,17 +566,11 @@ func cmdManifestRm(args []string) error {
 	if err != nil {
 		return err
 	}
-	idx := -1
-	for i, e := range m.Entries {
-		if e.Name == name {
-			idx = i
-			break
-		}
-	}
+	idx := slices.IndexFunc(m.Entries, func(e *manifest.Entry) bool { return e.Name == name })
 	if idx == -1 {
 		return fmt.Errorf("unknown source %q", name)
 	}
-	m.Entries = append(m.Entries[:idx], m.Entries[idx+1:]...)
+	m.Entries = slices.Delete(m.Entries, idx, idx+1)
 	if err := m.Save(); err != nil {
 		return err
 	}
@@ -596,14 +591,8 @@ func cmdList() error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "NAME\tVERSION\tREF\tCACHE\tAGE")
 	for _, e := range m.Entries {
-		version := resolve.InstalledVersion(e)
-		if version == "" {
-			version = "-"
-		}
-		ref := resolve.Ref(e, "")
-		if ref == "" {
-			ref = "(default)"
-		}
+		version := cmp.Or(resolve.InstalledVersion(e), "-")
+		ref := cmp.Or(resolve.Ref(e, ""), "(default)")
 		cacheCol := "(not cached)"
 		age := "-"
 		dir := cache.Dir(root, e.Name)

@@ -2,6 +2,7 @@
 package resolve
 
 import (
+	"cmp"
 	"os/exec"
 	"regexp"
 	"runtime"
@@ -34,11 +35,8 @@ func InstalledVersion(e *manifest.Entry) string {
 // Ref resolves the ref to use for an entry following the §5 precedence:
 // CLI ref → manifest ref → version tag → default_ref → "" (default branch).
 func Ref(e *manifest.Entry, cliRef string) string {
-	if cliRef != "" {
-		return cliRef
-	}
-	if e.Ref != "" {
-		return e.Ref
+	if ref := cmp.Or(cliRef, e.Ref); ref != "" {
+		return ref
 	}
 	if v := InstalledVersion(e); v != "" {
 		return e.TagPrefix + v
