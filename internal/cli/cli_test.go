@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -80,9 +82,11 @@ func TestVersionString(t *testing.T) {
 		want:     "dev",
 	}}
 	for _, tt := range tests {
-		if got := versionString(tt.injected, tt.bi); got != tt.want {
-			t.Errorf("%s: versionString(%q, bi) = %q, want %q", tt.name, tt.injected, got, tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			if got := versionString(tt.injected, tt.bi); got != tt.want {
+				t.Errorf("versionString(%q, bi) = %q, want %q", tt.injected, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -320,7 +324,7 @@ func TestManifestAddSetRm(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "none.toml")
 	t.Setenv(manifest.EnvManifest, missing)
 	run(1, "manifest", "rm", "x")
-	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+	if _, err := os.Stat(missing); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("rm created %s", missing)
 	}
 }

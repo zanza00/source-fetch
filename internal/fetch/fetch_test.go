@@ -4,8 +4,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/zanza00/source-fetch/internal/cache"
 	"github.com/zanza00/source-fetch/internal/manifest"
 )
 
@@ -38,8 +40,7 @@ func makeRepo(t *testing.T) (bare, tag, sha string) {
 	gitT(t, work, "add", ".")
 	gitT(t, work, "commit", "-q", "-m", "init")
 	gitT(t, work, "tag", "v1.2.3")
-	sha = gitT(t, work, "rev-parse", "HEAD")
-	sha = sha[:len(sha)-1] // strip newline from CombinedOutput
+	sha = strings.TrimSpace(gitT(t, work, "rev-parse", "HEAD"))
 	bare = filepath.Join(base, "bare.git")
 	gitT(t, base, "clone", "-q", "--bare", work, bare)
 	return bare, "v1.2.3", sha
@@ -124,6 +125,33 @@ func TestAtRefEmptyAlwaysTrue(t *testing.T) {
 	}
 }
 
+func TestEnsureRejectsDashRefAndURL(t *testing.T) {
+	root := t.TempDir()
+	valid := &manifest.Entry{Name: "tool", URL: "https://example.com/tool.git", Transport: "git"}
+	if _, err := Ensure(root, valid, "--upload-pack=evil", false, noop); err == nil {
+		t.Fatal("expected error for ref starting with '-'")
+	}
+	badURL := &manifest.Entry{Name: "tool", URL: "--upload-pack=evil", Transport: "git"}
+	if _, err := Ensure(root, badURL, "", false, noop); err == nil {
+		t.Fatal("expected error for url starting with '-'")
+	}
+}
+
+func TestReadMarkerInvalidTimestamp(t *testing.T) {
+	dir := t.TempDir()
+	body := "ref=v1.0.0\ncommit=abc123\nfetched=not-a-number\n"
+	if err := os.WriteFile(cache.Marker(dir), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, ok := ReadMarker(dir)
+	if !ok {
+		t.Fatal("expected ReadMarker to succeed")
+	}
+	if m.Ref != "v1.0.0" || m.Commit != "abc123" || m.Fetched != 0 {
+		t.Fatalf("Marker = %+v, want Ref=v1.0.0 Commit=abc123 Fetched=0", m)
+	}
+}
+
 func headOf(t *testing.T, dir string) (string, error) {
 	t.Helper()
 	cmd := exec.Command("git", "rev-parse", "HEAD")
@@ -132,9 +160,5 @@ func headOf(t *testing.T, dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	s := string(out)
-	for len(s) > 0 && (s[len(s)-1] == '\n' || s[len(s)-1] == '\r') {
-		s = s[:len(s)-1]
-	}
-	return s, nil
+	return strings.TrimRight(string(out), "\r\n"), nil
 }

@@ -32,7 +32,7 @@ func TestManifestID(t *testing.T) {
 	if a != b {
 		t.Fatalf("not stable: %s vs %s", a, b)
 	}
-	if len(a) < len("path-") || a[:len("path-")] != "path-" {
+	if !strings.HasPrefix(a, "path-") {
 		t.Fatalf("unexpected id: %s", a)
 	}
 }

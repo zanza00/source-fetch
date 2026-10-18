@@ -30,6 +30,12 @@ type Progress func(format string, args ...any)
 // Fast path: an existing checkout already at ref is returned without touching
 // the network. force re-clones unconditionally (used by `update`).
 func Ensure(root string, e *manifest.Entry, ref string, force bool, progress Progress) (string, error) {
+	if err := e.Validate(); err != nil {
+		return "", err
+	}
+	if strings.HasPrefix(ref, "-") {
+		return "", fmt.Errorf("source %q: invalid ref %q (must not start with '-')", e.Name, ref)
+	}
 	dir := cache.Dir(root, e.Name)
 
 	if !force && HasGit(dir) && AtRef(dir, ref) {
@@ -47,19 +53,19 @@ func Ensure(root string, e *manifest.Entry, ref string, force bool, progress Pro
 	}
 
 	if ref == "" {
-		if _, err := git.Run("", "clone", "-q", "--depth", "1", e.URL, dir); err != nil {
+		if _, err := git.Run("", "clone", "-q", "--depth", "1", "--", e.URL, dir); err != nil {
 			_ = os.RemoveAll(dir)
 			return "", err
 		}
 	} else {
-		if _, err := git.Run("", "clone", "-q", "--depth", "1", "--branch", ref, e.URL, dir); err != nil {
+		if _, err := git.Run("", "clone", "-q", "--depth", "1", "--branch", ref, "--", e.URL, dir); err != nil {
 			if err := fetchCommit(dir, e.URL, ref, progress); err != nil {
 				_ = os.RemoveAll(dir)
 				if err := os.MkdirAll(dir, 0o755); err != nil {
 					return "", err
 				}
 				progress("ref '%s' not found, using default branch", ref)
-				if _, err := git.Run("", "clone", "-q", "--depth", "1", e.URL, dir); err != nil {
+				if _, err := git.Run("", "clone", "-q", "--depth", "1", "--", e.URL, dir); err != nil {
 					_ = os.RemoveAll(dir)
 					return "", err
 				}
@@ -84,7 +90,7 @@ func fetchCommit(dir, url, ref string, progress Progress) error {
 	if _, err := git.Run(dir, "init", "-q"); err != nil {
 		return err
 	}
-	if _, err := git.Run(dir, "remote", "add", "origin", url); err != nil {
+	if _, err := git.Run(dir, "remote", "add", "--", "origin", url); err != nil {
 		return err
 	}
 	if _, err := git.Run(dir, "fetch", "-q", "--depth", "1", "origin", ref); err != nil {
@@ -159,8 +165,13 @@ func ReadMarker(dir string) (Marker, bool) {
 		case "commit":
 			m.Commit = v
 		case "fetched":
-			m.Fetched, _ = strconv.ParseInt(v, 10, 64)
+			if ts, err := strconv.ParseInt(v, 10, 64); err == nil {
+				m.Fetched = ts
+			}
 		}
+	}
+	if err := sc.Err(); err != nil {
+		return Marker{}, false
 	}
 	return m, true
 }

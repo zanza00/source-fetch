@@ -16,12 +16,12 @@ var errSilent = errors.New("")
 // jsonResult is the envelope for `--json` output, mirroring the shape used
 // by agent-browser: {"success": bool, "data"|"error": ...}.
 type jsonResult struct {
-	Success bool        `json:"success"`
-	Data    interface{} `json:"data,omitempty"`
-	Error   string      `json:"error,omitempty"`
+	Success bool   `json:"success"`
+	Data    any    `json:"data,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
-func printJSON(v interface{}) error {
+func printJSON(v any) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -77,14 +77,12 @@ func runSkillsList(jsonMode bool) error {
 		return printJSON(jsonResult{Success: true, Data: items})
 	}
 
-	max := 0
+	maxLen := 0
 	for _, s := range visible {
-		if len(s.Name) > max {
-			max = len(s.Name)
-		}
+		maxLen = max(maxLen, len(s.Name))
 	}
 	for _, s := range visible {
-		fmt.Printf("  %-*s  %s\n", max, s.Name, skills.Truncate(s.Description, 70))
+		fmt.Printf("  %-*s  %s\n", maxLen, s.Name, skills.Truncate(s.Description, 70))
 	}
 	return nil
 }
@@ -136,9 +134,9 @@ func runSkillsGet(args []string, jsonMode bool) error {
 	}
 
 	if jsonMode {
-		items := []map[string]interface{}{}
+		items := []map[string]any{}
 		for _, s := range targets {
-			item := map[string]interface{}{"name": s.Name, "content": s.Content}
+			item := map[string]any{"name": s.Name, "content": s.Content}
 			if full && len(s.Supplementary) > 0 {
 				files := []map[string]string{}
 				for _, f := range s.Supplementary {
