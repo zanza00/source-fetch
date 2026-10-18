@@ -6,10 +6,11 @@ package manifest
 
 import (
 	"bytes"
+	"cmp"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -65,25 +66,19 @@ func Load(path string) (*Manifest, error) {
 	for name, r := range f.Source {
 		e := &Entry{
 			Name:       name,
-			URL:        r.URL,
-			Transport:  r.Transport,
+			URL:        cmp.Or(r.URL, r.Repo), // repo is an accepted alias for the canonical url
+			Transport:  cmp.Or(r.Transport, "git"),
 			VersionCmd: r.VersionCmd,
 			TagPrefix:  r.TagPrefix,
 			Ref:        r.Ref,
 			DefaultRef: r.DefaultRef,
-		}
-		if e.URL == "" {
-			e.URL = r.Repo // accepted alias for the canonical `url`
-		}
-		if e.Transport == "" {
-			e.Transport = "git"
 		}
 		if err := e.Validate(); err != nil {
 			return nil, err
 		}
 		m.Entries = append(m.Entries, e)
 	}
-	sort.Slice(m.Entries, func(i, j int) bool { return m.Entries[i].Name < m.Entries[j].Name })
+	slices.SortFunc(m.Entries, func(a, b *Entry) int { return cmp.Compare(a.Name, b.Name) })
 	return m, nil
 }
 
@@ -91,8 +86,20 @@ func (e *Entry) Validate() error {
 	if strings.TrimSpace(e.Name) == "" {
 		return fmt.Errorf("manifest: source with empty name")
 	}
+	if !filepath.IsLocal(e.Name) || strings.ContainsAny(e.Name, `/\`) {
+		return fmt.Errorf("source %q: invalid name (must be a single local path element)", e.Name)
+	}
 	if e.URL == "" {
 		return fmt.Errorf("source %q: url is required", e.Name)
+	}
+	if strings.HasPrefix(e.URL, "-") {
+		return fmt.Errorf("source %q: invalid url %q (must not start with '-')", e.Name, e.URL)
+	}
+	if strings.HasPrefix(e.Ref, "-") {
+		return fmt.Errorf("source %q: invalid ref %q (must not start with '-')", e.Name, e.Ref)
+	}
+	if strings.HasPrefix(e.DefaultRef, "-") {
+		return fmt.Errorf("source %q: invalid default_ref %q (must not start with '-')", e.Name, e.DefaultRef)
 	}
 	if e.Transport != "git" {
 		return fmt.Errorf("source %q: unsupported transport %q (only \"git\" is supported)", e.Name, e.Transport)

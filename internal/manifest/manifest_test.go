@@ -55,6 +55,32 @@ tag_prefix = "v"
 url = "https://example.com/x.git"
 transport = "hg"
 `,
+		"path traversal name": `
+[source."../evil"]
+url = "https://example.com/x.git"
+`,
+		"slash in name": `
+[source."a/b"]
+url = "https://example.com/x.git"
+`,
+		"backslash in name": `
+[source."a\\b"]
+url = "https://example.com/x.git"
+`,
+		"option injection url": `
+[source.x]
+url = "--upload-pack=evil"
+`,
+		"option injection ref": `
+[source.x]
+url = "https://example.com/x.git"
+ref = "--upload-pack=evil"
+`,
+		"option injection default_ref": `
+[source.x]
+url = "https://example.com/x.git"
+default_ref = "--upload-pack=evil"
+`,
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
