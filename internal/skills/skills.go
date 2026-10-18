@@ -14,12 +14,14 @@
 package skills
 
 import (
+	"cmp"
 	"embed"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 //go:embed data
@@ -64,24 +66,22 @@ type Frontmatter struct {
 // continuation lines) and hidden.
 func ParseFrontmatter(content string) Frontmatter {
 	trimmed := strings.TrimLeft(content, " \t\n\r")
-	if !strings.HasPrefix(trimmed, "---") {
+	rest, ok := strings.CutPrefix(trimmed, "---")
+	if !ok {
 		return Frontmatter{}
 	}
-	rest := trimmed[3:]
-	end := strings.Index(rest, "\n---")
-	if end < 0 {
+	before, _, ok := strings.Cut(rest, "\n---")
+	if !ok {
 		return Frontmatter{}
 	}
 
 	var fm Frontmatter
-	lines := strings.Split(rest[:end], "\n")
+	lines := strings.Split(before, "\n")
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
-		var val string
-		switch {
-		case cutPrefix(line, "name:", &val):
+		if val, ok := strings.CutPrefix(line, "name:"); ok {
 			fm.Name = strings.TrimSpace(val)
-		case cutPrefix(line, "description:", &val):
+		} else if val, ok := strings.CutPrefix(line, "description:"); ok {
 			var b strings.Builder
 			b.WriteString(strings.TrimSpace(val))
 			// Fold YAML continuation lines (indented).
@@ -91,7 +91,8 @@ func ParseFrontmatter(content string) Frontmatter {
 				b.WriteString(strings.TrimSpace(lines[i]))
 			}
 			fm.Description = b.String()
-		case cutPrefix(line, "hidden:", &val):
+		} else if val, ok := strings.CutPrefix(line, "hidden:"); ok {
+			val = strings.TrimSpace(val)
 			fm.Hidden = val == "true" || val == "yes"
 		}
 	}
@@ -100,14 +101,6 @@ func ParseFrontmatter(content string) Frontmatter {
 	}
 	fm.OK = true
 	return fm
-}
-
-func cutPrefix(line, prefix string, val *string) bool {
-	if !strings.HasPrefix(line, prefix) {
-		return false
-	}
-	*val = strings.TrimSpace(strings.TrimPrefix(line, prefix))
-	return true
 }
 
 func isContinuation(line string) bool {
@@ -148,7 +141,7 @@ func discoverFS(fsys fs.FS, root string) ([]Skill, error) {
 			skills = append(skills, s)
 		}
 	}
-	sort.Slice(skills, func(i, j int) bool { return skills[i].Name < skills[j].Name })
+	slices.SortFunc(skills, func(a, b Skill) int { return cmp.Compare(a.Name, b.Name) })
 	return skills, nil
 }
 
@@ -175,7 +168,7 @@ func discoverDir(dir string) ([]Skill, error) {
 			skills = append(skills, s)
 		}
 	}
-	sort.Slice(skills, func(i, j int) bool { return skills[i].Name < skills[j].Name })
+	slices.SortFunc(skills, func(a, b Skill) int { return cmp.Compare(a.Name, b.Name) })
 	return skills, nil
 }
 
@@ -200,8 +193,8 @@ func skillFrom(dirName, content string, readSub func(string) ([]File, error)) Sk
 		}
 		s.Supplementary = append(s.Supplementary, files...)
 	}
-	sort.Slice(s.Supplementary, func(i, j int) bool {
-		return s.Supplementary[i].Path < s.Supplementary[j].Path
+	slices.SortFunc(s.Supplementary, func(a, b File) int {
+		return cmp.Compare(a.Path, b.Path)
 	})
 	return s
 }
@@ -253,15 +246,20 @@ func readSubDir(dir string) ([]File, error) {
 // Truncate shortens a description to at most max runes, cutting on a space
 // boundary and appending an ellipsis.
 func Truncate(s string, max int) string {
-	if len(s) <= max {
+	if max <= 0 {
+		return "..."
+	}
+	if utf8.RuneCountInString(s) <= max {
 		return s
 	}
-	cut := s
+	var cut string
+	count := 0
 	for i := range s {
-		if i > max {
+		if count == max {
 			cut = s[:i]
 			break
 		}
+		count++
 	}
 	if i := strings.LastIndex(cut, " "); i > 0 {
 		cut = cut[:i]

@@ -150,17 +150,48 @@ func TestDiscoverIgnoresDirsNoSkillMd(t *testing.T) {
 
 func TestTruncate(t *testing.T) {
 	tests := []struct {
+		name string
 		in   string
 		max  int
 		want string
 	}{
-		{"short", 10, "short"},
-		{"this is a longer description that should be truncated", 20, "this is a longer..."},
+		{
+			name: "shorter than max",
+			in:   "short",
+			max:  10,
+			want: "short",
+		},
+		{
+			name: "cuts on space boundary",
+			in:   "this is a longer description that should be truncated",
+			max:  20,
+			want: "this is a longer...",
+		},
+		{
+			name: "exact max+1 without spaces cuts at max",
+			in:   "0123456789a",
+			max:  10,
+			want: "0123456789...",
+		},
+		{
+			name: "multibyte runes counted as runes not bytes",
+			in:   "àèìòù",
+			max:  5,
+			want: "àèìòù",
+		},
+		{
+			name: "multibyte runes truncated at max runes",
+			in:   "àèìòùé",
+			max:  5,
+			want: "àèìòù...",
+		},
 	}
 	for _, tt := range tests {
-		if got := Truncate(tt.in, tt.max); got != tt.want {
-			t.Errorf("Truncate(%q, %d) = %q, want %q", tt.in, tt.max, got, tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Truncate(tt.in, tt.max); got != tt.want {
+				t.Errorf("Truncate(%q, %d) = %q, want %q", tt.in, tt.max, got, tt.want)
+			}
+		})
 	}
 }
 
