@@ -1,4 +1,5 @@
 /source-fetch
 /dist/
 /test/tmp/
+/.scratch/
 __pycache__/
