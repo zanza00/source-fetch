@@ -34,6 +34,10 @@ source-fetch peek                 # list ad-hoc cached trees
 source-fetch update <name>        # force a fresh clone at the resolved ref
 source-fetch rm <name> | <url>    # delete one cached tree
 source-fetch clean                # delete the cache for the current manifest
+source-fetch cache                # print the cache root in use
+source-fetch cache init [dir]     # point the manifest at a local cache dir
+source-fetch cache ignore         # make sure git ignores the cache root
+source-fetch --cache <dir> path <name>  # use another cache root for this call
 source-fetch manifest             # print the manifest path in use
 source-fetch manifest add <name> <url> [--version-cmd <cmd> ...]
                                   # add an entry (manifest created if missing)
@@ -54,21 +58,32 @@ disposable.
 
 ## Cache
 
-By default, the base is `$XDG_CACHE_HOME` or the platform's user cache
-directory (`~/.cache` on Linux). Manifest trees live at
+Inside a git repository the cache is project-local — the repository of the
+current directory, not the one that owns the manifest. Manifest trees live at
+`<project>/.source-fetch/<name>` and peek trees at
+`<project>/.source-fetch/adhoc/<url-derived-name>`. The directory is added to
+`.git/info/exclude` on first use, so it never shows up in `git status`.
+
+Outside a git repository the base is `$XDG_CACHE_HOME` or the platform's user
+cache directory (`~/.cache` on Linux). Manifest trees live at
 `<base>/source-fetch/<manifest-id>/<name>`; peek trees live at
 `<base>/source-fetch/adhoc/<url-derived-name>`.
 
-With `$SOURCE_FETCH_CACHE`, manifest trees instead live at
-`<override>/<name>` and peek trees at `<override>/adhoc/<url-derived-name>`.
-There is no per-manifest namespace in this mode.
+The root is picked in this order: `--cache <dir>` (this invocation only) →
+`$SOURCE_FETCH_CACHE` → the manifest's `cache_dir` → `<project>/.source-fetch`
+inside a git repository → `<base>/source-fetch/<manifest-id>` elsewhere.
+Relative paths from the environment or the manifest are resolved against the
+project root (the git toplevel that contains the current directory, else the
+git toplevel that owns the manifest, else the manifest's directory).
 
 Each tree is a plain git checkout with a `.source-fetch-ref` marker recording
 the requested ref, actual HEAD commit and fetch time. After a fallback, the
 recorded ref still names the requested ref; check HEAD to verify the version.
-`clean` refuses empty/`/`/`$HOME` targets and removes the current manifest's
-cache root. Normally peek trees are separate; with `$SOURCE_FETCH_CACHE`,
-`clean` also deletes the nested `adhoc` directory.
+`clean` refuses empty/`/`/`$HOME` targets, the root of a git repository, and
+a directory that holds the manifest or the current directory; it removes the
+current manifest's cache root. Normally peek trees are separate; with
+`$SOURCE_FETCH_CACHE` and with a project-local cache, `clean` also deletes the
+nested `adhoc` directory.
 
 ## Troubleshooting
 

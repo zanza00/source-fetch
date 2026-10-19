@@ -11,8 +11,9 @@ binary to match the installed CLI version.
 - **On demand only** — nothing is fetched until asked.
 - **Version-aware** — resolve a tag from the *installed* version when a
   `version_cmd` is configured, or choose a tag, branch, or commit yourself.
-- **Reusable cache** — keep dependency checkouts outside your project,
-  namespaced by manifest.
+- **Reusable cache** — inside a git repository the checkouts live in the
+  project (`.source-fetch/`), git-ignored; elsewhere in the user cache
+  directory, namespaced by manifest.
 - **One-off `peek`** — fetch any git URL once, in a separate ad-hoc cache.
 - **Agent-friendly** — prints a plain directory on stdout, progress on stderr.
 
@@ -122,6 +123,10 @@ source-fetch update chezmoi       # force re-clone at the resolved (pinned) ref
 source-fetch rm chezmoi           # drop one cached tree
 source-fetch rm <url>             # drop one ad-hoc tree
 source-fetch clean                # drop the cache for the current manifest
+source-fetch cache                # print the cache root in use
+source-fetch cache init [dir]     # point the manifest at a local cache dir
+source-fetch cache ignore         # make sure git ignores the cache root
+source-fetch --cache <dir> path chezmoi  # use another cache root for this call
 source-fetch manifest             # which manifest is in use
 source-fetch manifest add <name> <url> [--version-cmd <cmd> ...]
                                   # add an entry (manifest created if missing)
@@ -175,23 +180,50 @@ the repo, but read it before trusting it.
 
 ## Cache
 
-By default, `<base>` is `$XDG_CACHE_HOME` or the platform's user cache directory:
-`~/.cache` on Linux, `~/Library/Caches` on macOS, and `%LocalAppData%` on Windows.
-Manifest entries live at `<base>/source-fetch/<manifest-id>/<name>`;
-one-off `peek` trees live at `<base>/source-fetch/adhoc/<repo-basename>-<urlhash>`.
+Inside a git repository the cache is **project-local**: the repository you
+are working in, not the one that owns the manifest. Manifest entries live at
+`<project>/.source-fetch/<name>` and one-off `peek` trees at
+`<project>/.source-fetch/adhoc/<repo-basename>-<urlhash>`. The directory is
+added to `.git/info/exclude` the first time it is used, so it never shows up
+in `git status` and the tracked files of the repository stay untouched.
 
-With `$SOURCE_FETCH_CACHE`, entries instead live at `<override>/<name>` and
-peek trees at `<override>/adhoc/<repo-basename>-<urlhash>`, without a per-manifest
-namespace.
+Outside a git repository the cache lives in the user cache directory:
+`$XDG_CACHE_HOME`, else `~/.cache` on Linux, `~/Library/Caches` on macOS,
+`%LocalAppData%` on Windows. Manifest entries live at
+`<base>/source-fetch/<manifest-id>/<name>` and `peek` trees at
+`<base>/source-fetch/adhoc/<repo-basename>-<urlhash>`.
+
+The root is picked in this order:
+
+1. `--cache <dir>` — for this invocation only.
+2. `$SOURCE_FETCH_CACHE` — replaces the root entirely (no namespace).
+3. `cache_dir` in the manifest — relative to the project root, or absolute.
+4. `<project>/.source-fetch` — the default inside a git repository.
+5. `<base>/source-fetch/<manifest-id>` — the default everywhere else.
+
+The project root is the git toplevel that contains the current directory; when
+the current directory is not in a work tree, it is the git toplevel that owns
+the manifest, else the manifest's directory. Relative paths from the
+environment or the manifest are resolved against the project root, so the
+cache does not move when a command runs from a subdirectory. `--cache` is
+resolved against the current directory.
+
+```sh
+source-fetch cache                # print the root in use
+source-fetch cache init           # point the manifest at ./.source-fetch
+source-fetch cache init vendor/src # ... or at another directory
+source-fetch cache ignore         # write the ignore rule, if it is missing
+```
 
 - `<manifest-id>` is the basename of the git toplevel owning the manifest, else
   `path-<hash>`.
 - Ad-hoc names are `<repo-basename>-<urlhash>`: same-named repos never collide.
 - Each tree is a plain git checkout with a `.source-fetch-ref` marker.
-- `$SOURCE_FETCH_CACHE` overrides the root entirely (no namespace).
 - The cache is safe to delete at any time; `clean` refuses to run on
-  empty/`/`/`$HOME`. Normally `clean` removes only the current manifest's cache;
-  with `$SOURCE_FETCH_CACHE`, it removes the entire override, including `adhoc/`.
+  empty/`/`/`$HOME`, on the root of a git repository, and on a directory that
+  holds the manifest or the current directory. Normally `clean` removes only
+  the current manifest's cache; with `$SOURCE_FETCH_CACHE`, it removes the
+  entire override, including `adhoc/`.
 
 ## Development
 

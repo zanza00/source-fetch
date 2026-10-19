@@ -70,23 +70,61 @@ func Run(args []string) int {
 	return 0
 }
 
+// options holds the global settings parsed from the command line.
+type options struct {
+	// cacheOverride is the --cache value: it replaces the cache root for
+	// this invocation.
+	cacheOverride string
+}
+
+// parseGlobal extracts the global flags that may precede the command.
+func parseGlobal(args []string) (*options, []string, error) {
+	opt := &options{}
+	rest := args
+	for len(rest) > 0 && strings.HasPrefix(rest[0], "--") {
+		name, value, hasValue := strings.Cut(strings.TrimPrefix(rest[0], "--"), "=")
+		if name != "cache" {
+			return nil, nil, fmt.Errorf("unknown option %q", rest[0])
+		}
+		if !hasValue {
+			if len(rest) < 2 {
+				return nil, nil, fmt.Errorf("missing value for --cache")
+			}
+			value = rest[1]
+			rest = rest[1:]
+		}
+		if value == "" {
+			return nil, nil, fmt.Errorf("--cache needs a value")
+		}
+		opt.cacheOverride = value
+		rest = rest[1:]
+	}
+	return opt, rest, nil
+}
+
 func dispatch(args []string) error {
+	opt, args, err := parseGlobal(args)
+	if err != nil {
+		return err
+	}
 	if len(args) == 0 {
-		return cmdList()
+		return cmdList(opt)
 	}
 	switch args[0] {
 	case "list":
-		return cmdList()
+		return cmdList(opt)
 	case "path":
-		return cmdPath(args[1:])
+		return cmdPath(opt, args[1:])
 	case "peek":
-		return cmdPeek(args[1:])
+		return cmdPeek(opt, args[1:])
 	case "update":
-		return cmdUpdate(args[1:])
+		return cmdUpdate(opt, args[1:])
 	case "rm":
-		return cmdRm(args[1:])
+		return cmdRm(opt, args[1:])
 	case "clean":
-		return cmdClean(args[1:])
+		return cmdClean(opt, args[1:])
+	case "cache":
+		return cmdCache(opt, args[1:])
 	case "manifest":
 		return cmdManifest(args[1:])
 	case "skills":
@@ -100,7 +138,7 @@ func dispatch(args []string) error {
 	if strings.HasPrefix(args[0], "-") {
 		return fmt.Errorf("unknown option %q", args[0])
 	}
-	return cmdFetch(args)
+	return cmdFetch(opt, args)
 }
 
 func progress(format string, args ...any) {
@@ -120,24 +158,59 @@ func loadManifest() (*manifest.Manifest, error) {
 	return manifest.Load(path)
 }
 
-// entry resolves a manifest + one named entry + the cache root.
-func entry(name string) (*manifest.Manifest, *manifest.Entry, string, error) {
+// entry resolves a manifest + one named entry + the cache location.
+func entry(o *options, name string) (*manifest.Manifest, *manifest.Entry, cache.Location, error) {
 	m, err := loadManifest()
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, cache.Location{}, err
 	}
 	e, ok := m.Lookup(name)
 	if !ok {
-		return nil, nil, "", fmt.Errorf("unknown source %q", name)
+		return nil, nil, cache.Location{}, fmt.Errorf("unknown source %q", name)
 	}
-	root, err := cache.Root(m.Path)
+	loc, err := o.location(m)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, cache.Location{}, err
 	}
-	return m, e, root, nil
+	return m, e, loc, nil
 }
 
-func cmdFetch(args []string) error {
+// location resolves the cache root for a manifest.
+func (o *options) location(m *manifest.Manifest) (cache.Location, error) {
+	if m == nil {
+		return cache.Resolve("", "", o.cacheOverride)
+	}
+	return cache.Resolve(m.Path, m.CacheDir, o.cacheOverride)
+}
+
+// adhocLocation resolves the ad-hoc cache root. The manifest is optional:
+// peek works without one.
+func (o *options) adhocLocation() (cache.Location, error) {
+	m, err := loadManifest()
+	if err != nil {
+		return cache.ResolveAdhoc("", "", o.cacheOverride)
+	}
+	return cache.ResolveAdhoc(m.Path, m.CacheDir, o.cacheOverride)
+}
+
+// ensureIgnored makes sure a project-local cache is ignored by git, so it
+// never shows up in git status. A failure is a warning, not an error: the
+// checkout is still worth having.
+func ensureIgnored(loc cache.Location) {
+	if !loc.Local {
+		return
+	}
+	res, err := cache.EnsureIgnored(loc.Base)
+	if err != nil {
+		progress("warning: cannot make %s git-ignored: %v", loc.Base, err)
+		return
+	}
+	if res == cache.IgnoreAdded {
+		progress("ignoring %s in .git/info/exclude", loc.Base)
+	}
+}
+
+func cmdFetch(o *options, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("missing source name")
 	}
@@ -146,11 +219,12 @@ func cmdFetch(args []string) error {
 	if len(args) > 1 {
 		cliRef = args[1]
 	}
-	_, e, root, err := entry(name)
+	_, e, loc, err := entry(o, name)
 	if err != nil {
 		return err
 	}
-	dir, err := fetch.Ensure(root, e, resolve.Ref(e, cliRef), false, progress)
+	ensureIgnored(loc)
+	dir, err := fetch.Ensure(loc.Path, e, resolve.Ref(e, cliRef), false, progress)
 	if err != nil {
 		return err
 	}
@@ -158,7 +232,7 @@ func cmdFetch(args []string) error {
 	return nil
 }
 
-func cmdPath(args []string) error {
+func cmdPath(o *options, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("missing source name")
 	}
@@ -167,11 +241,12 @@ func cmdPath(args []string) error {
 	if len(args) > 1 {
 		sub = args[1]
 	}
-	_, e, root, err := entry(name)
+	_, e, loc, err := entry(o, name)
 	if err != nil {
 		return err
 	}
-	dir, err := fetch.Ensure(root, e, resolve.Ref(e, ""), false, progress)
+	ensureIgnored(loc)
+	dir, err := fetch.Ensure(loc.Path, e, resolve.Ref(e, ""), false, progress)
 	if err != nil {
 		return err
 	}
@@ -185,13 +260,13 @@ func cmdPath(args []string) error {
 // cmdPeek implements one-off fetches of URLs that live in no manifest: fetch
 // (into the ad-hoc cache) and print the directory. With no URL it lists the
 // ad-hoc cache.
-func cmdPeek(args []string) error {
-	root, err := cache.AdhocRoot()
+func cmdPeek(o *options, args []string) error {
+	loc, err := o.adhocLocation()
 	if err != nil {
 		return err
 	}
 	if len(args) == 0 {
-		return listAdhoc(root)
+		return listAdhoc(loc)
 	}
 	url := args[0]
 	cliRef := ""
@@ -199,7 +274,8 @@ func cmdPeek(args []string) error {
 		cliRef = args[1]
 	}
 	e := &manifest.Entry{Name: cache.AdhocName(url), URL: url, Transport: "git"}
-	dir, err := fetch.Ensure(root, e, resolve.Ref(e, cliRef), false, progress)
+	ensureIgnored(loc)
+	dir, err := fetch.Ensure(loc.Path, e, resolve.Ref(e, cliRef), false, progress)
 	if err != nil {
 		return err
 	}
@@ -208,7 +284,8 @@ func cmdPeek(args []string) error {
 }
 
 // listAdhoc prints every tree in the ad-hoc cache with its remote URL.
-func listAdhoc(root string) error {
+func listAdhoc(loc cache.Location) error {
+	root := loc.Path
 	dirs, err := os.ReadDir(root)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
@@ -248,16 +325,17 @@ func listAdhoc(root string) error {
 	return nil
 }
 
-func cmdUpdate(args []string) error {
+func cmdUpdate(o *options, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("missing source name")
 	}
 	name := args[0]
-	_, e, root, err := entry(name)
+	_, e, loc, err := entry(o, name)
 	if err != nil {
 		return err
 	}
-	dir, err := fetch.Ensure(root, e, resolve.Ref(e, ""), true, progress)
+	ensureIgnored(loc)
+	dir, err := fetch.Ensure(loc.Path, e, resolve.Ref(e, ""), true, progress)
 	if err != nil {
 		return err
 	}
@@ -265,24 +343,24 @@ func cmdUpdate(args []string) error {
 	return nil
 }
 
-func cmdRm(args []string) error {
+func cmdRm(o *options, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("missing source name")
 	}
 	target := args[0]
 	var dir string
 	if looksLikeURL(target) {
-		root, err := cache.AdhocRoot()
+		loc, err := o.adhocLocation()
 		if err != nil {
 			return err
 		}
-		dir = cache.Dir(root, cache.AdhocName(target))
+		dir = loc.Dir(cache.AdhocName(target))
 	} else {
-		_, _, root, err := entry(target)
+		_, _, loc, err := entry(o, target)
 		if err != nil {
 			return err
 		}
-		dir = cache.Dir(root, target)
+		dir = loc.Dir(target)
 	}
 	if !fetch.HasGit(dir) {
 		return fmt.Errorf("%s is not cached", target)
@@ -301,22 +379,142 @@ func looksLikeURL(s string) bool {
 	return strings.Contains(s, "://") || strings.HasPrefix(s, "git@")
 }
 
-func cmdClean(args []string) error {
+func cmdClean(o *options, args []string) error {
+	if len(args) > 0 {
+		return fmt.Errorf("usage: clean")
+	}
 	m, err := loadManifest()
 	if err != nil {
 		return err
 	}
-	root, err := cache.Root(m.Path)
+	loc, err := o.location(m)
 	if err != nil {
 		return err
 	}
-	if err := cache.GuardCleanTarget(root); err != nil {
+	if err := cache.GuardCleanTarget(loc.Path, m.Path); err != nil {
 		return err
 	}
-	if err := os.RemoveAll(root); err != nil {
+	if err := os.RemoveAll(loc.Path); err != nil {
 		return err
 	}
-	progress("cleaned %s", root)
+	progress("cleaned %s", loc.Path)
+	return nil
+}
+
+// cmdCache inspects and configures the cache root.
+//
+//	source-fetch cache            # print the cache root in use
+//	source-fetch cache init [dir] # point the manifest at a local cache dir
+//	source-fetch cache ignore     # make sure git ignores the cache root
+func cmdCache(o *options, args []string) error {
+	if len(args) == 0 {
+		return cmdCacheStatus(o)
+	}
+	switch args[0] {
+	case "init":
+		return cmdCacheInit(o, args[1:])
+	case "ignore":
+		return cmdCacheIgnore(o)
+	default:
+		return fmt.Errorf("unknown cache subcommand %q (want init or ignore)", args[0])
+	}
+}
+
+// cmdCacheStatus prints the cache root in use on stdout and its kind on
+// stderr.
+func cmdCacheStatus(o *options) error {
+	loc, err := o.statusLocation()
+	if err != nil {
+		return err
+	}
+	fmt.Println(loc.Path)
+	progress("cache: %s (%s)", loc.Path, cacheKind(loc))
+	return nil
+}
+
+// statusLocation resolves the cache root of the manifest in use, or of the
+// current directory when there is no manifest.
+func (o *options) statusLocation() (cache.Location, error) {
+	m, err := loadManifest()
+	if err != nil {
+		return cache.Resolve("", "", o.cacheOverride)
+	}
+	return o.location(m)
+}
+
+// cacheKind describes a cache location for humans.
+func cacheKind(loc cache.Location) string {
+	switch loc.Source {
+	case cache.SourceProject:
+		return "project-local"
+	case cache.SourceUser:
+		return "user cache"
+	case cache.SourceEnv:
+		return "environment override"
+	case cache.SourceManifest:
+		return "manifest cache_dir"
+	case cache.SourceOverride:
+		return "--cache override"
+	}
+	return loc.Source
+}
+
+// cmdCacheInit points the manifest at a local cache directory and makes sure
+// git ignores it.
+func cmdCacheInit(o *options, args []string) error {
+	if len(args) > 1 {
+		return fmt.Errorf("usage: cache init [dir]")
+	}
+	dir := cache.LocalDirName
+	if len(args) == 1 {
+		dir = args[0]
+	}
+	path, err := manifestWritePath(false)
+	if err != nil {
+		return err
+	}
+	m, err := loadForEdit(path)
+	if err != nil {
+		return err
+	}
+	m.CacheDir = dir
+	if err := m.Save(); err != nil {
+		return err
+	}
+	progress("cache_dir = %s in %s", dir, path)
+
+	loc, err := o.location(m)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(loc.Path, 0o755); err != nil {
+		return err
+	}
+	ensureIgnored(loc)
+	fmt.Println(loc.Path)
+	return nil
+}
+
+// cmdCacheIgnore makes sure git ignores the cache root, adding the rule to
+// .git/info/exclude when it is missing.
+func cmdCacheIgnore(o *options) error {
+	loc, err := o.statusLocation()
+	if err != nil {
+		return err
+	}
+	res, err := cache.EnsureIgnored(loc.Base)
+	if err != nil {
+		return err
+	}
+	switch res {
+	case cache.IgnoreAdded:
+		progress("ignoring %s in .git/info/exclude", loc.Base)
+	case cache.IgnoreAlready:
+		progress("%s is already ignored by git", loc.Base)
+	default:
+		progress("%s is not inside a git repository", loc.Base)
+	}
+	fmt.Println(loc.Base)
 	return nil
 }
 
@@ -578,12 +776,12 @@ func cmdManifestRm(args []string) error {
 	return nil
 }
 
-func cmdList() error {
+func cmdList(o *options) error {
 	m, err := loadManifest()
 	if err != nil {
 		return err
 	}
-	root, err := cache.Root(m.Path)
+	loc, err := o.location(m)
 	if err != nil {
 		return err
 	}
@@ -595,7 +793,7 @@ func cmdList() error {
 		ref := cmp.Or(resolve.Ref(e, ""), "(default)")
 		cacheCol := "(not cached)"
 		age := "-"
-		dir := cache.Dir(root, e.Name)
+		dir := loc.Dir(e.Name)
 		if fetch.HasGit(dir) {
 			cacheCol = dir
 			if mk, ok := fetch.ReadMarker(dir); ok && mk.Fetched > 0 {
@@ -608,14 +806,14 @@ func cmdList() error {
 	if err := w.Flush(); err != nil {
 		return err
 	}
-	fmt.Printf("\ncache:    %s\nmanifest: %s\n", root, m.Path)
+	fmt.Printf("\ncache:    %s\nmanifest: %s\n", loc.Path, m.Path)
 	return nil
 }
 
 func usage(w *os.File) {
 	fmt.Fprintf(w, `%[1]s — fetch and cache dependency sources on demand
 
-usage: %[1]s [command] [args]
+usage: %[1]s [--cache <dir>] [command] [args]
 
 commands:
   (none) | list          list every manifest entry (version, ref, cache, age)
@@ -626,6 +824,9 @@ commands:
   update <name>          force a fresh clone at the resolved ref
   rm <name> | <url>      delete one cached tree (manifest entry or ad-hoc)
   clean                  delete the cache for the current manifest
+  cache                  print the cache root in use
+  cache init [dir]       point the manifest at a local cache dir (.source-fetch)
+  cache ignore           make sure git ignores the cache root
   manifest               print the manifest path in use
   manifest add <name> <url> [--version-cmd <cmd>] [--tag-prefix <p>]
                          [--ref <ref>] [--default-ref <ref>] [--global]
@@ -639,6 +840,9 @@ commands:
   skills get --all       print every skill
   version | --version    print the version
   help | -h | --help     print this usage
+
+options:
+  --cache <dir>          use <dir> as the cache root for this invocation
 
 environment:
   %[2]s      explicit manifest path

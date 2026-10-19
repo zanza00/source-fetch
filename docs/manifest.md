@@ -4,6 +4,8 @@ A manifest is flat TOML. Each dependency is a table under `[source.<name>]`.
 Only the canonical `[source.*]` prefix is supported.
 
 ```toml
+cache_dir = ".source-fetch"   # optional; where the checkouts live
+
 [source.chezmoi]
 url         = "https://github.com/twpayne/chezmoi.git"
 version_cmd = "chezmoi --version"   # optional; ""/omitted = no version detection
@@ -22,9 +24,30 @@ tag_prefix  = "v"                    # optional; string between version and tag
 | `tag_prefix` | no | string between the version and the release tag (`""` or `"v"`). |
 | `ref` | no | persistent pin (tag, branch or commit SHA). Wins over `version_cmd`. |
 | `default_ref` | no | fallback ref when the version is empty/unparseable. |
+| `cache_dir` | no | top-level key: the directory that holds the checkouts. |
 
 `version_cmd` runs through the platform shell (`sh -c` on macOS/Linux,
 `cmd /C` on Windows), so commands are shell-dependent.
+
+## Cache location
+
+`cache_dir` is a top-level key, not a per-source field: it says where the
+checkouts of every entry live. It is relative to the project root (the git
+toplevel that contains the current directory, else the git toplevel that owns
+the manifest, else the manifest's directory) or absolute.
+
+The cache root is picked in this order:
+
+1. `--cache <dir>` — for this invocation only.
+2. `$SOURCE_FETCH_CACHE` — replaces the root entirely (no namespace).
+3. `cache_dir` — relative to the project root, or absolute.
+4. `<project>/.source-fetch` — the default inside a git repository.
+5. `<base>/source-fetch/<manifest-id>` — the default outside a git
+   repository, where `<base>` is `$XDG_CACHE_HOME` or the platform's user
+   cache directory.
+
+A project-local cache is added to `.git/info/exclude`, so it never shows up in
+`git status`. See the README for the full layout.
 
 ## Ref resolution precedence
 
@@ -82,4 +105,4 @@ root for the manifest.
 - Every write re-encodes the whole file from the model (atomic temp-file +
   rename, permissions preserved). Comments and layout of a hand-written
   file are not preserved, and the implied `transport = "git"` default is
-  not written out.
+  not written out. The top-level `cache_dir` is preserved.
