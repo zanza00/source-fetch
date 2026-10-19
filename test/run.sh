@@ -126,7 +126,12 @@ cat >"$repo/.source-fetch.toml" <<EOF
 url = "$bare"
 EOF
 
-(cd "$repo" && "$bin" cache) | grep -q "$repo/.source-fetch" || fail "cache root is not project-local"
+cache_root="$(cd "$repo" && "$bin" cache)"
+# pwd -P resolves symlinks: git reports the physical path of the toplevel
+# (/tmp is a link to /private/tmp on macOS).
+[ "$(basename "$cache_root")" = ".source-fetch" ] || fail "cache root is not project-local"
+[ "$(cd "$(dirname "$cache_root")" && pwd -P)" = "$(cd "$repo" && pwd -P)" ] \
+  || fail "cache root is not project-local"
 (cd "$repo" && "$bin" path tool) >/dev/null
 [ -d "$repo/.source-fetch/tool/.git" ] || fail "project-local checkout"
 grep -q "/.source-fetch" "$repo/.git/info/exclude" || fail "exclude rule missing"

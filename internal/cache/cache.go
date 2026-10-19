@@ -296,20 +296,24 @@ func GuardCleanTarget(root, manifestPath string) error {
 
 // sameDir reports whether a and b are the same directory.
 func sameDir(a, b string) bool {
-	absA, errA := filepath.Abs(a)
-	absB, errB := filepath.Abs(b)
-	if errA != nil || errB != nil {
-		return filepath.Clean(a) == filepath.Clean(b)
-	}
-	return filepath.Clean(absA) == filepath.Clean(absB)
+	return resolvePath(a) == resolvePath(b)
 }
 
 // contains reports whether path is dir or lives inside it.
 func contains(dir, path string) bool {
-	dir = filepath.Clean(dir)
-	path = filepath.Clean(path)
+	dir = resolvePath(dir)
+	path = resolvePath(path)
 	if dir == path {
 		return true
 	}
 	return strings.HasPrefix(path, dir+string(filepath.Separator))
+}
+
+// resolvePath returns the canonical form of path with symlinks resolved.
+// Paths that do not exist yet are only cleaned.
+func resolvePath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return filepath.Clean(path)
 }

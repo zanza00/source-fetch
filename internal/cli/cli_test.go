@@ -174,6 +174,18 @@ func gitRepo(t *testing.T, dir string) {
 	gitT(t, dir, "commit", "-q", "-m", "init")
 }
 
+// gitTopLevel returns the canonical toplevel of dir: git resolves symlinks
+// (/tmp is a link to /private/tmp on macOS), so the paths it reports differ
+// from the ones the test passes in.
+func gitTopLevel(t *testing.T, dir string) string {
+	t.Helper()
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		t.Fatalf("git rev-parse: %v", err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // makeBareRepo builds a local bare repo with one commit tagged v1.2.3 and
 // returns its path.
 func makeBareRepo(t *testing.T) string {
@@ -406,6 +418,7 @@ func TestProjectLocalCache(t *testing.T) {
 	repo := t.TempDir()
 	gitRepo(t, repo)
 	t.Chdir(repo)
+	top := gitTopLevel(t, repo)
 	bare := makeBareRepo(t)
 
 	manifestPath := filepath.Join(repo, manifest.CanonicalName)
@@ -420,7 +433,7 @@ func TestProjectLocalCache(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("cache = %d: %s", code, stderr)
 	}
-	want := filepath.Join(repo, cache.LocalDirName)
+	want := filepath.Join(top, cache.LocalDirName)
 	if got := strings.TrimSpace(stdout); got != want {
 		t.Fatalf("cache = %q, want %q", got, want)
 	}
@@ -431,7 +444,7 @@ func TestProjectLocalCache(t *testing.T) {
 		t.Fatalf("path = %d: %s", code, stderr)
 	}
 	dir := strings.TrimSpace(stdout)
-	if want := filepath.Join(repo, cache.LocalDirName, "tool"); dir != want {
+	if want := filepath.Join(top, cache.LocalDirName, "tool"); dir != want {
 		t.Fatalf("path = %q, want %q", dir, want)
 	}
 	if !fetch.HasGit(dir) {
@@ -481,6 +494,7 @@ func TestCacheIgnore(t *testing.T) {
 	repo := t.TempDir()
 	gitRepo(t, repo)
 	t.Chdir(repo)
+	top := gitTopLevel(t, repo)
 	manifestPath := filepath.Join(repo, manifest.CanonicalName)
 	if err := os.WriteFile(manifestPath, []byte("[source.tool]\nurl = \"file:///nowhere.git\"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -491,10 +505,10 @@ func TestCacheIgnore(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("cache ignore = %d: %s", code, stderr)
 	}
-	if got := strings.TrimSpace(stdout); got != filepath.Join(repo, cache.LocalDirName) {
+	if got := strings.TrimSpace(stdout); got != filepath.Join(top, cache.LocalDirName) {
 		t.Fatalf("cache ignore = %q", got)
 	}
-	body, err := os.ReadFile(filepath.Join(repo, ".git", "info", "exclude"))
+	body, err := os.ReadFile(filepath.Join(top, ".git", "info", "exclude"))
 	if err != nil {
 		t.Fatal(err)
 	}
