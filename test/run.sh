@@ -112,4 +112,36 @@ pass "rm"
 [ ! -d "$out" ] || fail "clean did not delete"
 pass "clean"
 
+# --- project-local cache (a git repository) ---------------------------------
+# The cache override is dropped here: inside a git repository the cache is
+# project-local by default.
+unset SOURCE_FETCH_CACHE
+repo="$tmp/repo"
+mkdir -p "$repo"
+git init -q "$repo"
+git -C "$repo" config user.email t@example.com
+git -C "$repo" config user.name t
+cat >"$repo/.source-fetch.toml" <<EOF
+[source.tool]
+url = "$bare"
+EOF
+
+cache_root="$(cd "$repo" && "$bin" cache)"
+# pwd -P resolves symlinks: git reports the physical path of the toplevel
+# (/tmp is a link to /private/tmp on macOS).
+[ "$(basename "$cache_root")" = ".source-fetch" ] || fail "cache root is not project-local"
+[ "$(cd "$(dirname "$cache_root")" && pwd -P)" = "$(cd "$repo" && pwd -P)" ] \
+  || fail "cache root is not project-local"
+(cd "$repo" && "$bin" path tool) >/dev/null
+[ -d "$repo/.source-fetch/tool/.git" ] || fail "project-local checkout"
+grep -q "/.source-fetch" "$repo/.git/info/exclude" || fail "exclude rule missing"
+if git -C "$repo" status --porcelain | grep -q ".source-fetch/"; then
+  fail "git status reports the cache"
+fi
+pass "project-local cache is git-ignored"
+
+(cd "$repo" && "$bin" clean) >/dev/null
+[ ! -d "$repo/.source-fetch" ] || fail "clean did not delete the project-local cache"
+pass "clean removes the project-local cache"
+
 printf 'all smoke tests passed\n'

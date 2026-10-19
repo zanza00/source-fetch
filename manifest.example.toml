@@ -3,6 +3,12 @@
 # One table per dependency, under [source.<name>]. Save as `.source-fetch.toml`
 # in your project root (auto-discovered by walking upward from $PWD), or point
 # $SOURCE_FETCH_MANIFEST at it.
+#
+# Optional top-level key: where the checkouts live. Relative paths are
+# resolved against the project root. Inside a git repository the default is
+# the project-local `.source-fetch/`; outside one it is the user cache
+# directory.
+# cache_dir = ".source-fetch"
 
 # A version-matched CLI tool: the checkout is pinned to the tag v<installed>.
 [source.chezmoi]

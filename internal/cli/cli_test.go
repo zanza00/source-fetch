@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -146,6 +147,43 @@ func gitT(t *testing.T, dir string, args ...string) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v: %v: %s", args, err, out)
 	}
+}
+
+// runCLI runs the CLI and returns its stdout, stderr and exit code.
+func runCLI(t *testing.T, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
+	stdout = captureStdout(t, func() {
+		stderr = captureStderr(t, func() { code = Run(args) })
+	})
+	return stdout, stderr, code
+}
+
+// gitRepo makes dir a git work tree with one tracked file.
+func gitRepo(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitT(t, dir, "init", "-q")
+	gitT(t, dir, "config", "user.email", "t@example.com")
+	gitT(t, dir, "config", "user.name", "t")
+	if err := os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitT(t, dir, "add", ".")
+	gitT(t, dir, "commit", "-q", "-m", "init")
+}
+
+// gitTopLevel returns the canonical toplevel of dir: git resolves symlinks
+// (/tmp is a link to /private/tmp on macOS), so the paths it reports differ
+// from the ones the test passes in.
+func gitTopLevel(t *testing.T, dir string) string {
+	t.Helper()
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		t.Fatalf("git rev-parse: %v", err)
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // makeBareRepo builds a local bare repo with one commit tagged v1.2.3 and
@@ -373,5 +411,133 @@ func TestManifestRemovalWorkflows(t *testing.T) {
 				t.Fatalf("checkout exists = %v, want %v", got, !removeCache)
 			}
 		})
+	}
+}
+
+func TestProjectLocalCache(t *testing.T) {
+	repo := t.TempDir()
+	gitRepo(t, repo)
+	t.Chdir(repo)
+	top := gitTopLevel(t, repo)
+	bare := makeBareRepo(t)
+
+	manifestPath := filepath.Join(repo, manifest.CanonicalName)
+	body := fmt.Sprintf("[source.tool]\nurl = %q\n", "file://"+bare)
+	if err := os.WriteFile(manifestPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(manifest.EnvManifest, manifestPath)
+
+	// The cache root is the project-local one.
+	stdout, stderr, code := runCLI(t, "cache")
+	if code != 0 {
+		t.Fatalf("cache = %d: %s", code, stderr)
+	}
+	want := filepath.Join(top, cache.LocalDirName)
+	if got := strings.TrimSpace(stdout); got != want {
+		t.Fatalf("cache = %q, want %q", got, want)
+	}
+
+	// The checkout lands in the project-local cache.
+	stdout, stderr, code = runCLI(t, "path", "tool")
+	if code != 0 {
+		t.Fatalf("path = %d: %s", code, stderr)
+	}
+	dir := strings.TrimSpace(stdout)
+	if want := filepath.Join(top, cache.LocalDirName, "tool"); dir != want {
+		t.Fatalf("path = %q, want %q", dir, want)
+	}
+	if !fetch.HasGit(dir) {
+		t.Fatalf("no checkout at %s", dir)
+	}
+
+	// Git does not report the cache: the rule went to .git/info/exclude.
+	out, err := exec.Command("git", "-C", repo, "status", "--porcelain").CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), cache.LocalDirName+"/") {
+		t.Fatalf("git status reports the cache:\n%s", out)
+	}
+}
+
+func TestCacheInit(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	manifestPath := filepath.Join(dir, manifest.CanonicalName)
+	if err := os.WriteFile(manifestPath, []byte("[source.tool]\nurl = \"file:///nowhere.git\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(manifest.EnvManifest, manifestPath)
+
+	stdout, stderr, code := runCLI(t, "cache", "init")
+	if code != 0 {
+		t.Fatalf("cache init = %d: %s", code, stderr)
+	}
+	want := filepath.Join(dir, cache.LocalDirName)
+	if got := strings.TrimSpace(stdout); got != want {
+		t.Fatalf("cache init = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(want); err != nil {
+		t.Fatalf("cache init did not create %s: %v", want, err)
+	}
+	m, err := manifest.Load(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.CacheDir != cache.LocalDirName {
+		t.Fatalf("cache_dir = %q, want %q", m.CacheDir, cache.LocalDirName)
+	}
+}
+
+func TestCacheIgnore(t *testing.T) {
+	repo := t.TempDir()
+	gitRepo(t, repo)
+	t.Chdir(repo)
+	top := gitTopLevel(t, repo)
+	manifestPath := filepath.Join(repo, manifest.CanonicalName)
+	if err := os.WriteFile(manifestPath, []byte("[source.tool]\nurl = \"file:///nowhere.git\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(manifest.EnvManifest, manifestPath)
+
+	stdout, stderr, code := runCLI(t, "cache", "ignore")
+	if code != 0 {
+		t.Fatalf("cache ignore = %d: %s", code, stderr)
+	}
+	if got := strings.TrimSpace(stdout); got != filepath.Join(top, cache.LocalDirName) {
+		t.Fatalf("cache ignore = %q", got)
+	}
+	body, err := os.ReadFile(filepath.Join(top, ".git", "info", "exclude"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "/"+cache.LocalDirName) {
+		t.Fatalf("exclude file has no rule:\n%s", body)
+	}
+}
+
+func TestCacheOverrideFlag(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	manifestPath := filepath.Join(dir, manifest.CanonicalName)
+	if err := os.WriteFile(manifestPath, []byte("[source.tool]\nurl = \"file:///nowhere.git\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(manifest.EnvManifest, manifestPath)
+
+	alt := filepath.Join(dir, "alt")
+	stdout, stderr, code := runCLI(t, "--cache", alt, "cache")
+	if code != 0 {
+		t.Fatalf("cache = %d: %s", code, stderr)
+	}
+	if got := strings.TrimSpace(stdout); got != alt {
+		t.Fatalf("cache = %q, want %q", got, alt)
+	}
+
+	// The flag is only global: it must precede the command.
+	_, _, code = runCLI(t, "cache", "--cache", alt)
+	if code == 0 {
+		t.Fatal("a flag after the command should fail")
 	}
 }

@@ -17,14 +17,18 @@ A manifest makes a dependency reusable: name it once, then
 Discovery precedence: `$SOURCE_FETCH_MANIFEST` → nearest `.source-fetch.toml`
 walking upward from `$PWD` → `~/.config/source-fetch/manifest.toml`. An
 explicit missing path errors without falling back; project and global
-manifests are not merged. Checkouts are namespaced per manifest unless
-`$SOURCE_FETCH_CACHE` overrides the cache root.
+manifests are not merged. Checkouts are namespaced per manifest unless the
+cache root is overridden (`--cache`, `$SOURCE_FETCH_CACHE`, or the
+manifest's `cache_dir`) or the current directory is in a git repository:
+there the cache is project-local, in `<project>/.source-fetch`.
 
 ## Fields
 
 Flat TOML, one `[source.<name>]` table per dependency:
 
 ```toml
+cache_dir = ".source-fetch"   # optional top-level key: where the checkouts live
+
 [source.chezmoi]
 url         = "https://github.com/twpayne/chezmoi.git"  # required
 version_cmd = "chezmoi --version"   # optional: command whose output has the version
@@ -32,6 +36,10 @@ tag_prefix  = "v"                    # optional: prepended to the detected versi
 # ref       = "v2.73.0"              # optional: uncomment for a persistent pin
 # default_ref = "<tag-or-branch>"     # optional: use an existing ref in this repo
 ```
+
+`cache_dir` is a top-level key, not a per-source field: it says where the
+checkouts of every entry live, relative to the project root or absolute. See
+`source-fetch skills get core` for the full cache layout.
 
 ## Ref precedence
 
@@ -84,4 +92,5 @@ source-fetch manifest rm chezmoi
 
 After the entry is removed, `rm chezmoi` fails with "unknown source". A retained
 checkout can be deleted manually or with `clean`, which removes the whole cache
-root for the manifest (including peek trees when `$SOURCE_FETCH_CACHE` is set).
+root for the manifest (including peek trees when the cache is project-local or
+`$SOURCE_FETCH_CACHE` is set).

@@ -66,7 +66,7 @@ internal/cli/          command dispatch, version injection target
 internal/manifest/     manifest model, load, discovery
 internal/resolve/      version detection + ref precedence
 internal/fetch/        fetch algorithm + at-ref fast path + marker
-internal/cache/        cache root, manifest-id, clean guards
+internal/cache/        cache root resolution, git ignore rules, clean guards
 internal/git/          git subprocess wrapper
 internal/skills/       skills served by the CLI (go:embed'd in data/)
 skills/source-fetch/   discovery stub (installed into agents via `npx skills add`)
@@ -111,6 +111,12 @@ skills/source-fetch/   discovery stub (installed into agents via `npx skills add
   upward from `$PWD`, or forced via `$SOURCE_FETCH_MANIFEST`. See
   `docs/manifest.md` and `manifest.example.toml`.
 - The cache layout is documented in `README.md`; `clean` has safety guards
-  (refuses empty/`/`/`$HOME`) — preserve them when touching `internal/cache`.
+  (refuses empty/`/`/`$HOME`, the repository root, and any directory holding
+  the manifest or the current directory) — preserve them when touching
+  `internal/cache`.
+- Inside a git repository the cache is project-local (`.source-fetch/`) and
+  git-ignored through `.git/info/exclude`; outside one it lives in the user
+  cache directory, namespaced per manifest. The project root is the git
+  toplevel of the **current directory** — not of the manifest.
 - Design notes live in `docs/` (`the_idea.md`, `transports.md`,
   `manifest.md`) — consult them before changing core fetch/resolve behavior.

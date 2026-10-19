@@ -38,8 +38,11 @@ type Entry struct {
 
 // Manifest is a loaded set of entries plus the path it came from.
 type Manifest struct {
-	Path    string
-	Entries []*Entry
+	Path string
+	// CacheDir is the optional top-level cache_dir: the directory that
+	// holds the checkouts, relative to the project root or absolute.
+	CacheDir string
+	Entries  []*Entry
 }
 
 type rawEntry struct {
@@ -53,7 +56,8 @@ type rawEntry struct {
 }
 
 type rawFile struct {
-	Source map[string]rawEntry `toml:"source"`
+	CacheDir string              `toml:"cache_dir"`
+	Source   map[string]rawEntry `toml:"source"`
 }
 
 // Load reads and validates a manifest file.
@@ -62,7 +66,7 @@ func Load(path string) (*Manifest, error) {
 	if _, err := toml.DecodeFile(path, &f); err != nil {
 		return nil, fmt.Errorf("parse manifest %s: %w", path, err)
 	}
-	m := &Manifest{Path: path}
+	m := &Manifest{Path: path, CacheDir: f.CacheDir}
 	for name, r := range f.Source {
 		e := &Entry{
 			Name:       name,
@@ -182,7 +186,9 @@ type encodeEntry struct {
 }
 
 type encodeFile struct {
-	Source map[string]encodeEntry `toml:"source"`
+	// CacheDir comes first: a top-level key must precede the tables.
+	CacheDir string                 `toml:"cache_dir,omitempty"`
+	Source   map[string]encodeEntry `toml:"source"`
 }
 
 // Save rewrites the manifest file at m.Path from the in-memory entries.
@@ -217,7 +223,7 @@ func (m *Manifest) Save() error {
 	}
 
 	var buf bytes.Buffer
-	if err := toml.NewEncoder(&buf).Encode(encodeFile{Source: source}); err != nil {
+	if err := toml.NewEncoder(&buf).Encode(encodeFile{CacheDir: m.CacheDir, Source: source}); err != nil {
 		return fmt.Errorf("encode manifest %s: %w", m.Path, err)
 	}
 

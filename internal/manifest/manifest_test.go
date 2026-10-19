@@ -193,3 +193,45 @@ func TestSaveCreatesMissingDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestLoadCacheDir(t *testing.T) {
+	path := write(t, t.TempDir(), "cache_dir = \".source-fetch\"\n\n[source.a]\nurl = \"https://example.com/a.git\"\n")
+	m, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.CacheDir != ".source-fetch" {
+		t.Fatalf("cache_dir = %q, want .source-fetch", m.CacheDir)
+	}
+}
+
+func TestSaveKeepsCacheDir(t *testing.T) {
+	path := write(t, t.TempDir(), "cache_dir = \".source-fetch\"\n\n[source.a]\nurl = \"https://example.com/a.git\"\n")
+	m, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Entries = append(m.Entries, &Entry{Name: "b", URL: "https://example.com/b.git", Transport: "git"})
+	if err := m.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `cache_dir = ".source-fetch"`) {
+		t.Fatalf("save dropped cache_dir:\n%s", body)
+	}
+
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CacheDir != ".source-fetch" {
+		t.Fatalf("cache_dir = %q, want .source-fetch", got.CacheDir)
+	}
+	if len(got.Entries) != 2 {
+		t.Fatalf("got %d entries, want 2", len(got.Entries))
+	}
+}
