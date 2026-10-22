@@ -54,8 +54,8 @@ func Ensure(root string, e *manifest.Entry, ref string, opts EnsureOpts) (string
 	if err := e.Validate(); err != nil {
 		return "", err
 	}
-	if strings.HasPrefix(ref, "-") {
-		return "", fmt.Errorf("source %q: invalid ref %q (must not start with '-')", e.Name, ref)
+	if err := git.ValidateRef(ref); err != nil {
+		return "", fmt.Errorf("source %q: %w", e.Name, err)
 	}
 	depth := opts.Depth
 	if depth == 0 {
@@ -283,6 +283,9 @@ func AtRef(dir, ref string) bool {
 // WriteMarker records the requested ref, the resolved HEAD, the fetch time and
 // the actual history depth.
 func WriteMarker(dir, ref string, depth int) error {
+	if err := git.ValidateRef(ref); err != nil {
+		return fmt.Errorf("cannot record marker: %w", err)
+	}
 	commit, err := git.HeadCommit(dir)
 	if err != nil {
 		return err

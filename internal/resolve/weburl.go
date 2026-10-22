@@ -6,6 +6,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/zanza00/source-fetch/internal/git"
 )
 
 // ParsedURL is a web repository link split into the pieces needed to fetch and
@@ -22,15 +24,7 @@ var (
 		"raw": true, "blame": true, "releases": true,
 	}
 	giteaMarkers = map[string]bool{
-		"src": true, "raw": true, "blame": true, "releases": true,
-	}
-	// gitlabMarkers includes the page kinds GitLab supports but source-fetch
-	// does not: seeing one of them lets the parser fail instead of treating
-	// the page as a repository path.
-	gitlabMarkers = map[string]bool{
-		"blob": true, "tree": true, "commit": true, "raw": true, "blame": true,
-		"tags": true, "releases": true, "issues": true, "merge_requests": true,
-		"pipelines": true,
+		"src": true, "raw": true, "blame": true, "commit": true, "releases": true,
 	}
 	gitlabLegacyMarkers = map[string]bool{
 		"blob": true, "tree": true, "commit": true, "raw": true, "blame": true,
@@ -85,18 +79,38 @@ func ParseWebURL(rawURL, cliRef string) (ParsedURL, error) {
 		repo     []string
 		ref, sub string
 	)
-	switch host {
-	case "github.com":
+	switch {
+	case host == "github.com":
 		repo, ref, sub, err = parseGitHub(raw, segs, cliRef)
-	case "codeberg.org":
-		repo, ref, sub, err = parseCodeberg(raw, segs, cliRef)
-	case "gitlab.com":
+	case host == "codeberg.org":
+		repo, ref, sub, err = parseGitea(raw, segs, "Codeberg", cliRef)
+	case host == "gitea.com":
+		repo, ref, sub, err = parseGitea(raw, segs, "Gitea", cliRef)
+	case host == "gitlab.com":
 		repo, ref, sub, err = parseGitLab(raw, segs, cliRef)
+	case host == "raw.githubusercontent.com":
+		// raw.githubusercontent.com is a raw-file CDN, never a repository
+		// host: /{owner}/{repo}/{ref}/{path} would otherwise look exactly like
+		// a GitHub-like repo path and be cloned.
+		return ParsedURL{}, fmt.Errorf("unsupported host %q: raw file pages are not supported; use the repository URL", host)
+	case host == "bitbucket.org":
+		repo, ref, sub, err = parseBitbucket(raw, segs)
+	case isAzureDevOpsHost(host):
+		repo, ref, sub, err = parseAzureDevOps(raw, u, segs)
 	default:
 		repo, ref, sub, err = parseGeneric(raw, segs, cliRef)
 	}
 	if err != nil {
 		return ParsedURL{}, err
+	}
+
+	// A ref taken from the URL is attacker-controlled. Reject it here instead
+	// of letting clone/fetch fail and silently falling back to the default
+	// branch, which would serve a file from the wrong commit.
+	if ref != "" {
+		if err := git.ValidateRef(ref); err != nil {
+			return ParsedURL{}, fmt.Errorf("invalid ref %q in URL %q: %w", ref, raw, err)
+		}
 	}
 
 	for _, s := range repo {
@@ -147,12 +161,14 @@ func parseGitHub(raw string, segs []string, cliRef string) ([]string, string, st
 	return segs[:2], ref, sub, nil
 }
 
-func parseCodeberg(raw string, segs []string, cliRef string) ([]string, string, string, error) {
+// parseGitea parses Codeberg, Gitea and Forgejo links. site names the host in
+// error messages ("Codeberg", "Gitea").
+func parseGitea(raw string, segs []string, site, cliRef string) ([]string, string, string, error) {
 	if len(segs) == 2 {
 		return segs, "", "", nil
 	}
 	if len(segs) < 3 || !giteaMarkers[segs[2]] {
-		return nil, "", "", fmt.Errorf("unsupported Codeberg URL %q: only repository, src, raw, blame and releases/tag links are supported", raw)
+		return nil, "", "", fmt.Errorf("unsupported %s URL %q: only repository, src, commit, raw, blame and releases/tag links are supported", site, raw)
 	}
 	ref, sub, err := extractGitea(segs[2], segs[3:], cliRef, raw)
 	if err != nil {
@@ -165,6 +181,9 @@ func parseGitLab(raw string, segs []string, cliRef string) ([]string, string, st
 	if i, kind, ok := findGitLabMarker(segs); ok {
 		if !gitlabSourceKinds[kind] {
 			return nil, "", "", unsupportedGitLab(raw)
+		}
+		if i < 2 {
+			return nil, "", "", fmt.Errorf("unsupported GitLab URL %q: missing repository path before /-/%s/ (expected namespace/project)", raw, kind)
 		}
 		ref, sub, err := extractGitLab(kind, segs[i+2:], cliRef, raw)
 		if err != nil {
@@ -183,7 +202,67 @@ func parseGitLab(raw string, segs []string, cliRef string) ([]string, string, st
 	return segs, "", "", nil
 }
 
+// parseBitbucket accepts a Bitbucket repository URL only. Bitbucket serves
+// source, raw, commit, pull-request and wiki pages below the same
+// /{workspace}/{repo} prefix, so any deeper path would be cloned as though it
+// were the repository.
+func parseBitbucket(raw string, segs []string) ([]string, string, string, error) {
+	if len(segs) != 2 {
+		return nil, "", "", fmt.Errorf("unsupported Bitbucket URL %q: only repository links (/{workspace}/{repo}) are supported; source, raw, commits, pull request and wiki pages are not", raw)
+	}
+	return segs, "", "", nil
+}
+
+// isAzureDevOpsHost reports whether host belongs to Azure DevOps. The legacy
+// form uses a per-organisation {org}.visualstudio.com host.
+func isAzureDevOpsHost(host string) bool {
+	return host == "dev.azure.com" || strings.HasSuffix(host, ".visualstudio.com")
+}
+
+// parseAzureDevOps accepts an Azure DevOps repository URL such as
+// dev.azure.com/{org}/{project}/_git/{repo} as a plain clone URL. Azure DevOps
+// deep links carry the file path in the ?path= query parameter, which
+// ParseWebURL always drops; accepting those would print the repository root
+// instead of the file, so they are rejected.
+func parseAzureDevOps(raw string, u *url.URL, segs []string) ([]string, string, string, error) {
+	git := -1
+	for i, s := range segs {
+		if s == "_git" {
+			git = i
+			break
+		}
+	}
+	if git < 0 || git+1 >= len(segs) {
+		return nil, "", "", fmt.Errorf("unsupported Azure DevOps URL %q: expected a repository URL containing /_git/{repo}", raw)
+	}
+	if _, ok := u.Query()["path"]; ok {
+		return nil, "", "", fmt.Errorf("unsupported Azure DevOps URL %q: deep links with ?path= are not supported; use the repository URL", raw)
+	}
+	return segs, "", "", nil
+}
+
 func parseGeneric(raw string, segs []string, cliRef string) ([]string, string, string, error) {
+	// A generic host can serve both /{owner}/{repo} and a single-segment
+	// /{repo}. A URL whose second segment is a web marker (for example
+	// /repo/blob/main/file) is therefore ambiguous: it is either a deep link
+	// into a single-segment repository or a two-segment repository whose name
+	// happens to be "blob". Only the single-segment repository URL is
+	// supported, so reject the shape instead of cloning the wrong repository.
+	// This deliberately rejects an ambiguous two-segment path such as
+	// /o/blob/main as well; that is safer than cloning the wrong thing.
+	if singleSegmentRepoDeepLink(segs) {
+		return nil, "", "", fmt.Errorf("unsupported URL form %q: single-segment repository deep links are not supported; use the repository URL", raw)
+	}
+	// Gitea's explicit raw/blame selector wins over GitHub's raw/<ref>/... shape,
+	// so a GitHub Enterprise ref literally named branch, tag or commit is
+	// ambiguous and parses as Gitea. See giteaRawShapeOK.
+	if giteaRawShapeOK(segs) {
+		ref, sub, err := extractGitea(segs[2], segs[3:], cliRef, raw)
+		if err != nil {
+			return nil, "", "", err
+		}
+		return segs[:2], ref, sub, nil
+	}
 	if githubShapeOK(segs) {
 		ref, sub, err := extractGitHubLike(segs[2], segs[3:], cliRef, raw)
 		if err != nil {
@@ -198,7 +277,13 @@ func parseGeneric(raw string, segs []string, cliRef string) ([]string, string, s
 		}
 		return segs[:2], ref, sub, nil
 	}
-	if i, kind, ok := findGitLabMarker(segs); ok && gitlabSourceKinds[kind] && len(segs) > i+2 {
+	if i, kind, ok := findGitLabMarker(segs); ok {
+		if !gitlabSourceKinds[kind] {
+			return nil, "", "", fmt.Errorf("unsupported URL form %q: /-/%s/ pages are not supported; use the repository URL", raw, kind)
+		}
+		if i == 0 {
+			return nil, "", "", fmt.Errorf("unsupported URL form %q: missing repository path before /-/%s/", raw, kind)
+		}
 		ref, sub, err := extractGitLab(kind, segs[i+2:], cliRef, raw)
 		if err != nil {
 			return nil, "", "", err
@@ -216,6 +301,37 @@ func parseGeneric(raw string, segs []string, cliRef string) ([]string, string, s
 	return segs, "", "", nil
 }
 
+// singleSegmentRepoDeepLink reports whether segs has the shape of a web deep
+// link into a single-segment repository: /{repo}/{marker}/... . A valid
+// multi-segment shape (GitHub-like, Gitea, or a GitLab "/-/" marker after two
+// or more segments) means the marker-looking second segment is actually part
+// of a two-segment repository name, so those links are left to the normal
+// parser (for example /o/blob/blob/main/file and /o/blob/-/tree/main).
+func singleSegmentRepoDeepLink(segs []string) bool {
+	if len(segs) < 3 || !isSingleSegmentRepoMarker(segs[1]) {
+		return false
+	}
+	// A GitLab "/-/" marker at index 1 is the single-segment form and stays
+	// rejected, even though the following segment can look like a GitHub
+	// marker (e.g. /repo/-/tree/main). Only a marker at index >= 2 proves a
+	// multi-segment repository.
+	if i, _, ok := findGitLabMarker(segs); ok {
+		return i < 2
+	}
+	if githubShapeOK(segs) || giteaShapeOK(segs) || giteaRawShapeOK(segs) {
+		return false
+	}
+	return true
+}
+
+// isSingleSegmentRepoMarker reports whether s is a known web marker that can
+// follow a repository in a deep link. webMarkers covers the GitHub-like and
+// Gitea pages; "-" is GitLab's reserved separator and pipelines is GitLab's
+// pipelines page.
+func isSingleSegmentRepoMarker(s string) bool {
+	return webMarkers[s] || s == "-" || s == "pipelines"
+}
+
 func githubShapeOK(segs []string) bool {
 	if len(segs) < 3 || !githubMarkers[segs[2]] {
 		return false
@@ -225,6 +341,25 @@ func githubShapeOK(segs []string) bool {
 		return len(rest) >= 2 && rest[0] == "tag"
 	}
 	return len(rest) >= 1
+}
+
+// giteaRawShapeOK reports whether a generic-host URL uses Gitea's
+// /(raw|blame)/(branch|tag|commit)/... form, where the selector names how the
+// ref is interpreted. It needs a segment after the selector (the ref for
+// branch/tag, the SHA for commit) plus a path for raw/blame.
+//
+// A GitHub Enterprise URL using raw/<ref>/<path> is indistinguishable from this
+// form when the ref is literally named branch, tag or commit; the Gitea
+// selector wins. Any other ref still parses as GitHub.
+func giteaRawShapeOK(segs []string) bool {
+	if len(segs) < 5 || (segs[2] != "raw" && segs[2] != "blame") {
+		return false
+	}
+	switch segs[3] {
+	case "branch", "tag", "commit":
+		return true
+	}
+	return false
 }
 
 func giteaShapeOK(segs []string) bool {
@@ -241,12 +376,14 @@ func giteaShapeOK(segs []string) bool {
 	return false
 }
 
-// findGitLabMarker returns the first "-" at index >= 2 followed by a known
-// GitLab kind. Unsupported page kinds are still recognised here so the parser
-// can report them instead of treating the URL as a repository.
+// findGitLabMarker returns the index and kind of the first GitLab "/-/" marker.
+// On GitLab the "/-/" sequence is reserved: a "-" segment followed by a kind
+// segment always opens a page, whether or not source-fetch supports that page.
+// A "-" followed by another "-" belongs to the repository path (a repository
+// can be named "-"), so it is skipped; the second "-" then opens the marker.
 func findGitLabMarker(segs []string) (int, string, bool) {
-	for i := 2; i+1 < len(segs); i++ {
-		if segs[i] == "-" && gitlabMarkers[segs[i+1]] {
+	for i := 0; i+1 < len(segs); i++ {
+		if segs[i] == "-" && segs[i+1] != "-" {
 			return i, segs[i+1], true
 		}
 	}
@@ -270,7 +407,9 @@ func extractGitHubLike(kind string, parts []string, cliRef, raw string) (string,
 		if len(parts) < 2 || parts[0] != "tag" {
 			return "", "", fmt.Errorf("URL %q has no tag after /releases/tag/", raw)
 		}
-		return parts[1], "", nil
+		// A release/tag page has no subpath, so everything after the marker is
+		// the tag itself: tags may contain '/'.
+		return strings.Join(parts[1:], "/"), "", nil
 	default:
 		return "", "", fmt.Errorf("unsupported URL form %q", raw)
 	}
@@ -295,7 +434,14 @@ func extractGitea(marker string, rest []string, cliRef, raw string) (string, str
 		if len(rest) < 2 || rest[0] != "tag" {
 			return "", "", fmt.Errorf("URL %q has no tag after /releases/tag/", raw)
 		}
-		return rest[1], "", nil
+		// A release/tag page has no subpath, so everything after the marker is
+		// the tag itself: tags may contain '/'.
+		return strings.Join(rest[1:], "/"), "", nil
+	case "commit":
+		if len(rest) == 0 {
+			return "", "", fmt.Errorf("URL %q has no ref after /commit/", raw)
+		}
+		return rest[0], strings.Join(rest[1:], "/"), nil
 	default:
 		return "", "", fmt.Errorf("unsupported URL form %q", raw)
 	}
@@ -318,7 +464,9 @@ func extractGitLab(kind string, parts []string, cliRef, raw string) (string, str
 		if len(parts) == 0 {
 			return "", "", fmt.Errorf("URL %q has no tag after /%s/", raw, kind)
 		}
-		return parts[0], "", nil
+		// A tag/release page has no subpath, so everything after the marker is
+		// the tag itself: tags may contain '/'.
+		return strings.Join(parts, "/"), "", nil
 	default:
 		return "", "", unsupportedGitLab(raw)
 	}

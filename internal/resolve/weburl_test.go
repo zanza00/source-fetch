@@ -38,6 +38,14 @@ func TestParseWebURL(t *testing.T) {
 		url:  "https://github.com/o/r/releases/tag/v1.2.3",
 		want: ParsedURL{RepoURL: "https://github.com/o/r", Ref: "v1.2.3"},
 	}, {
+		name: "github releases tag with slash",
+		url:  "https://github.com/o/r/releases/tag/release/1.0",
+		want: ParsedURL{RepoURL: "https://github.com/o/r", Ref: "release/1.0"},
+	}, {
+		name: "github releases tag with slash and prerelease suffix",
+		url:  "https://github.com/o/r/releases/tag/release/1.0.0-rc.1",
+		want: ParsedURL{RepoURL: "https://github.com/o/r", Ref: "release/1.0.0-rc.1"},
+	}, {
 		name: "github repo with .git and trailing slash",
 		url:  "https://github.com/o/r.git/",
 		want: ParsedURL{RepoURL: "https://github.com/o/r.git"},
@@ -70,9 +78,21 @@ func TestParseWebURL(t *testing.T) {
 		url:  "https://gitlab.com/group/sub/repo/-/tags/v1.0.0",
 		want: ParsedURL{RepoURL: "https://gitlab.com/group/sub/repo", Ref: "v1.0.0"},
 	}, {
+		name: "gitlab tags with slash",
+		url:  "https://gitlab.com/group/sub/repo/-/tags/release/1.0",
+		want: ParsedURL{RepoURL: "https://gitlab.com/group/sub/repo", Ref: "release/1.0"},
+	}, {
+		name: "gitlab tags with slash and prerelease suffix",
+		url:  "https://gitlab.com/group/sub/repo/-/tags/release/1.0.0-rc.1",
+		want: ParsedURL{RepoURL: "https://gitlab.com/group/sub/repo", Ref: "release/1.0.0-rc.1"},
+	}, {
 		name: "gitlab releases",
 		url:  "https://gitlab.com/group/sub/repo/-/releases/v1.0.0",
 		want: ParsedURL{RepoURL: "https://gitlab.com/group/sub/repo", Ref: "v1.0.0"},
+	}, {
+		name: "gitlab releases with slash",
+		url:  "https://gitlab.com/group/sub/repo/-/releases/release/1.0",
+		want: ParsedURL{RepoURL: "https://gitlab.com/group/sub/repo", Ref: "release/1.0"},
 	}, {
 		name: "gitlab repo named dash",
 		url:  "https://gitlab.com/group/sub/-/-/blob/main/foo",
@@ -90,6 +110,38 @@ func TestParseWebURL(t *testing.T) {
 		url:     "https://gitlab.com/group/repo/-/issues/1",
 		wantErr: "unsupported GitLab URL",
 	}, {
+		name:    "gitlab unsupported commits page",
+		url:     "https://gitlab.com/group/repo/-/commits/main",
+		wantErr: "unsupported GitLab URL",
+	}, {
+		name:    "gitlab unsupported compare page",
+		url:     "https://gitlab.com/group/repo/-/compare/main...dev",
+		wantErr: "unsupported GitLab URL",
+	}, {
+		name:    "gitlab unsupported branches page",
+		url:     "https://gitlab.com/group/repo/-/branches",
+		wantErr: "unsupported GitLab URL",
+	}, {
+		name:    "gitlab unsupported pipelines page",
+		url:     "https://gitlab.com/group/repo/-/pipelines/123",
+		wantErr: "unsupported GitLab URL",
+	}, {
+		name:    "gitlab root-level unsupported page",
+		url:     "https://gitlab.com/-/snippets/1",
+		wantErr: "unsupported GitLab URL",
+	}, {
+		name:    "gitlab marker without repository path",
+		url:     "https://gitlab.com/-/blob/main/x",
+		wantErr: "missing repository path",
+	}, {
+		name:    "gitlab marker with only a namespace",
+		url:     "https://gitlab.com/group/-/blob/main/x",
+		wantErr: "missing repository path",
+	}, {
+		name: "gitlab repo named dash tree",
+		url:  "https://gitlab.com/group/sub/-/-/tree/main/dir",
+		want: ParsedURL{RepoURL: "https://gitlab.com/group/sub/-", Ref: "main", Subpath: "dir"},
+	}, {
 		name: "codeberg src branch",
 		url:  "https://codeberg.org/o/r/src/branch/main/dir/file",
 		want: ParsedURL{RepoURL: "https://codeberg.org/o/r", Ref: "main", Subpath: "dir/file"},
@@ -101,6 +153,18 @@ func TestParseWebURL(t *testing.T) {
 		name: "codeberg src commit",
 		url:  "https://codeberg.org/o/r/src/commit/abc123/dir",
 		want: ParsedURL{RepoURL: "https://codeberg.org/o/r", Ref: "abc123", Subpath: "dir"},
+	}, {
+		name: "codeberg commit",
+		url:  "https://codeberg.org/o/r/commit/abc123/dir/file",
+		want: ParsedURL{RepoURL: "https://codeberg.org/o/r", Ref: "abc123", Subpath: "dir/file"},
+	}, {
+		name: "codeberg commit without path",
+		url:  "https://codeberg.org/o/r/commit/abc123",
+		want: ParsedURL{RepoURL: "https://codeberg.org/o/r", Ref: "abc123"},
+	}, {
+		name: "codeberg repo named commit",
+		url:  "https://codeberg.org/o/commit/src/branch/main/file",
+		want: ParsedURL{RepoURL: "https://codeberg.org/o/commit", Ref: "main", Subpath: "file"},
 	}, {
 		name: "codeberg raw branch",
 		url:  "https://codeberg.org/o/r/raw/branch/main/file",
@@ -114,17 +178,57 @@ func TestParseWebURL(t *testing.T) {
 		url:  "https://codeberg.org/o/r/releases/tag/v1.0",
 		want: ParsedURL{RepoURL: "https://codeberg.org/o/r", Ref: "v1.0"},
 	}, {
+		name: "codeberg releases tag with slash",
+		url:  "https://codeberg.org/o/r/releases/tag/release/1.0",
+		want: ParsedURL{RepoURL: "https://codeberg.org/o/r", Ref: "release/1.0"},
+	}, {
 		name:    "codeberg unsupported page",
 		url:     "https://codeberg.org/o/r/issues/1",
 		wantErr: "unsupported Codeberg URL",
+	}, {
+		name: "gitea raw branch",
+		url:  "https://gitea.com/o/r/raw/branch/main/file",
+		want: ParsedURL{RepoURL: "https://gitea.com/o/r", Ref: "main", Subpath: "file"},
+	}, {
+		name: "gitea commit",
+		url:  "https://gitea.com/o/r/commit/abc123/dir",
+		want: ParsedURL{RepoURL: "https://gitea.com/o/r", Ref: "abc123", Subpath: "dir"},
+	}, {
+		name:    "gitea unsupported page",
+		url:     "https://gitea.com/o/r/issues/1",
+		wantErr: "unsupported Gitea URL",
 	}, {
 		name: "generic host gitlab marker",
 		url:  "https://git.example.com/group/sub/repo/-/tree/main/dir",
 		want: ParsedURL{RepoURL: "https://git.example.com/group/sub/repo", Ref: "main", Subpath: "dir"},
 	}, {
+		name: "generic host gitlab tags with slash",
+		url:  "https://git.example.com/group/sub/repo/-/tags/release/1.0",
+		want: ParsedURL{RepoURL: "https://git.example.com/group/sub/repo", Ref: "release/1.0"},
+	}, {
+		name: "generic host gitlab releases with slash",
+		url:  "https://git.example.com/group/sub/repo/-/releases/release/1.0",
+		want: ParsedURL{RepoURL: "https://git.example.com/group/sub/repo", Ref: "release/1.0"},
+	}, {
 		name: "generic host gitea src",
 		url:  "https://gitea.example.com/o/r/src/branch/main/file",
 		want: ParsedURL{RepoURL: "https://gitea.example.com/o/r", Ref: "main", Subpath: "file"},
+	}, {
+		name: "generic host gitea raw branch",
+		url:  "https://gitea.example.com/o/r/raw/branch/main/file",
+		want: ParsedURL{RepoURL: "https://gitea.example.com/o/r", Ref: "main", Subpath: "file"},
+	}, {
+		name: "generic host gitea blame branch",
+		url:  "https://gitea.example.com/o/r/blame/branch/main/file",
+		want: ParsedURL{RepoURL: "https://gitea.example.com/o/r", Ref: "main", Subpath: "file"},
+	}, {
+		name: "generic host gitea raw commit",
+		url:  "https://gitea.example.com/o/r/raw/commit/abc123/file",
+		want: ParsedURL{RepoURL: "https://gitea.example.com/o/r", Ref: "abc123", Subpath: "file"},
+	}, {
+		name: "generic host github-like raw",
+		url:  "https://ghe.example.com/o/r/raw/main/file",
+		want: ParsedURL{RepoURL: "https://ghe.example.com/o/r", Ref: "main", Subpath: "file"},
 	}, {
 		name: "generic host github-like blob",
 		url:  "https://ghe.example.com/o/r/blob/main/file",
@@ -138,6 +242,50 @@ func TestParseWebURL(t *testing.T) {
 		url:  "https://example.com/repo",
 		want: ParsedURL{RepoURL: "https://example.com/repo"},
 	}, {
+		name:    "generic host single segment repo blob deep link",
+		url:     "https://example.com/repo/blob/main/file",
+		wantErr: "single-segment repository deep links are not supported",
+	}, {
+		name:    "generic host single segment repo gitea deep link",
+		url:     "https://example.com/repo/src/branch/main",
+		wantErr: "single-segment repository deep links are not supported",
+	}, {
+		name:    "generic host single segment repo commit deep link",
+		url:     "https://example.com/repo/commit/abc123",
+		wantErr: "single-segment repository deep links are not supported",
+	}, {
+		name:    "generic host single segment repo gitlab deep link",
+		url:     "https://example.com/repo/-/tree/main",
+		wantErr: "single-segment repository deep links are not supported",
+	}, {
+		name: "generic host two segment repo",
+		url:  "https://example.com/o/r",
+		want: ParsedURL{RepoURL: "https://example.com/o/r"},
+	}, {
+		name: "generic host two segment repo named like a marker",
+		url:  "https://example.com/o/blob",
+		want: ParsedURL{RepoURL: "https://example.com/o/blob"},
+	}, {
+		name:    "generic host ambiguous repo named like a marker with deep link",
+		url:     "https://example.com/o/blob/main",
+		wantErr: "single-segment repository deep links are not supported",
+	}, {
+		name: "generic host two segment repo named like a marker github-like deep link",
+		url:  "https://example.com/o/blob/blob/main/file",
+		want: ParsedURL{RepoURL: "https://example.com/o/blob", Ref: "main", Subpath: "file"},
+	}, {
+		name: "generic host two segment repo named like a marker gitea deep link",
+		url:  "https://example.com/o/blob/src/branch/main",
+		want: ParsedURL{RepoURL: "https://example.com/o/blob", Ref: "main"},
+	}, {
+		name: "generic host two segment repo named like a marker gitlab deep link",
+		url:  "https://example.com/o/blob/-/tree/main",
+		want: ParsedURL{RepoURL: "https://example.com/o/blob", Ref: "main"},
+	}, {
+		name: "generic host two segment github-like deep link",
+		url:  "https://example.com/o/r/blob/main/file",
+		want: ParsedURL{RepoURL: "https://example.com/o/r", Ref: "main", Subpath: "file"},
+	}, {
 		name: "generic host dash repo with tree",
 		url:  "https://example.com/group/blob/-/tree/main",
 		want: ParsedURL{RepoURL: "https://example.com/group/blob", Ref: "main"},
@@ -146,13 +294,73 @@ func TestParseWebURL(t *testing.T) {
 		url:     "https://ghe.example.com/git/o/r/blob/main/file",
 		wantErr: "unsupported URL form",
 	}, {
+		name: "bitbucket repo",
+		url:  "https://bitbucket.org/o/r",
+		want: ParsedURL{RepoURL: "https://bitbucket.org/o/r"},
+	}, {
+		name: "bitbucket repo with .git and trailing slash",
+		url:  "https://bitbucket.org/o/r.git/",
+		want: ParsedURL{RepoURL: "https://bitbucket.org/o/r.git"},
+	}, {
 		name:    "bitbucket src form",
 		url:     "https://bitbucket.org/o/r/src/main/file",
-		wantErr: "unsupported URL form",
+		wantErr: "unsupported Bitbucket URL",
+	}, {
+		name:    "bitbucket raw form",
+		url:     "https://bitbucket.org/o/r/raw/abc123/file",
+		wantErr: "unsupported Bitbucket URL",
+	}, {
+		name:    "bitbucket commits page",
+		url:     "https://bitbucket.org/o/r/commits/main",
+		wantErr: "unsupported Bitbucket URL",
+	}, {
+		name:    "bitbucket workspace page",
+		url:     "https://bitbucket.org/o",
+		wantErr: "unsupported Bitbucket URL",
+	}, {
+		name:    "raw githubusercontent file page",
+		url:     "https://raw.githubusercontent.com/o/r/main/file",
+		wantErr: "raw file pages are not supported",
+	}, {
+		name: "azure devops repo",
+		url:  "https://dev.azure.com/org/project/_git/repo",
+		want: ParsedURL{RepoURL: "https://dev.azure.com/org/project/_git/repo"},
+	}, {
+		name: "azure devops legacy visualstudio repo",
+		url:  "https://org.visualstudio.com/project/_git/repo",
+		want: ParsedURL{RepoURL: "https://org.visualstudio.com/project/_git/repo"},
+	}, {
+		name:    "azure devops deep link",
+		url:     "https://dev.azure.com/org/project/_git/repo?path=/foo",
+		wantErr: "unsupported Azure DevOps URL",
+	}, {
+		name:    "azure devops legacy visualstudio deep link",
+		url:     "https://org.visualstudio.com/project/_git/repo?path=/foo",
+		wantErr: "unsupported Azure DevOps URL",
+	}, {
+		name:    "azure devops project page",
+		url:     "https://dev.azure.com/org/project",
+		wantErr: "unsupported Azure DevOps URL",
 	}, {
 		name:    "generic host unsupported page",
 		url:     "https://git.example.com/group/repo/-/issues/1",
 		wantErr: "unsupported URL form",
+	}, {
+		name:    "generic host unsupported gitlab pipelines",
+		url:     "https://git.example.com/group/repo/-/pipelines/1",
+		wantErr: "unsupported URL form",
+	}, {
+		name:    "generic host unsupported gitlab branches",
+		url:     "https://git.example.com/group/repo/-/branches",
+		wantErr: "unsupported URL form",
+	}, {
+		name:    "generic host root-level unsupported gitlab page",
+		url:     "https://git.example.com/-/snippets/1",
+		wantErr: "unsupported URL form",
+	}, {
+		name: "generic host repo named dash",
+		url:  "https://git.example.com/group/-/-/blob/main/foo",
+		want: ParsedURL{RepoURL: "https://git.example.com/group/-", Ref: "main", Subpath: "foo"},
 	}, {
 		name:    "github issues",
 		url:     "https://github.com/o/r/issues/1",
@@ -173,6 +381,18 @@ func TestParseWebURL(t *testing.T) {
 		name:    "github releases without tag",
 		url:     "https://github.com/o/r/releases",
 		wantErr: `has no tag after /releases/tag/`,
+	}, {
+		name:    "codeberg releases without tag",
+		url:     "https://codeberg.org/o/r/releases/tag",
+		wantErr: `has no tag after /releases/tag/`,
+	}, {
+		name:    "gitlab tags without tag",
+		url:     "https://gitlab.com/group/repo/-/tags/",
+		wantErr: `has no tag after /tags/`,
+	}, {
+		name:    "gitlab releases without tag",
+		url:     "https://gitlab.com/group/repo/-/releases/",
+		wantErr: `has no tag after /releases/`,
 	}, {
 		name:   "cli ref overrides url ref",
 		url:    "https://github.com/o/r/blob/main/foo.go",
@@ -204,6 +424,34 @@ func TestParseWebURL(t *testing.T) {
 		name:    "traversal in repository path",
 		url:     "https://github.com/../etc",
 		wantErr: "escapes the repository",
+	}, {
+		name:    "encoded dotdot ref in blob",
+		url:     "https://github.com/acme/tool/blob/%2e%2e/file.txt",
+		wantErr: "invalid ref",
+	}, {
+		name:    "dotdot ref in tree",
+		url:     "https://github.com/o/r/tree/..",
+		wantErr: "invalid ref",
+	}, {
+		name:    "dotdot ref in commit",
+		url:     "https://github.com/o/r/commit/..",
+		wantErr: "invalid ref",
+	}, {
+		name:    "nul byte ref",
+		url:     "https://github.com/o/r/blob/main%00/file.txt",
+		wantErr: "invalid ref",
+	}, {
+		name:    "newline ref",
+		url:     "https://github.com/o/r/blob/main%0A/file.txt",
+		wantErr: "invalid ref",
+	}, {
+		name:    "space ref",
+		url:     "https://github.com/o/r/blob/main%20foo/file.txt",
+		wantErr: "invalid ref",
+	}, {
+		name:    "colon ref",
+		url:     "https://github.com/o/r/blob/main:foo/file.txt",
+		wantErr: "invalid ref",
 	}, {
 		name:    "malformed URL",
 		url:     "https://[::1",

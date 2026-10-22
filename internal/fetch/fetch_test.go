@@ -233,6 +233,90 @@ func TestEnsureRejectsDashRefAndURL(t *testing.T) {
 	}
 }
 
+func TestEnsureRejectsInvalidRefs(t *testing.T) {
+	bare, _, _ := makeRepo(t)
+	e := &manifest.Entry{Name: "tool", URL: bare, Transport: "git"}
+	refs := []string{
+		"..",
+		"main..x",
+		"main:foo",
+		"main foo",
+		"main\nfoo",
+		"main\x00foo",
+		".hidden",
+		"main.lock",
+		"main.",
+		"@",
+		"main@{1}",
+		"main~1",
+		"main^",
+		"main?",
+		"main*",
+		"main[",
+		`main\foo`,
+		"/main",
+		"main/",
+		"a//b",
+	}
+	for _, ref := range refs {
+		t.Run(ref, func(t *testing.T) {
+			root := t.TempDir()
+			if _, err := Ensure(root, e, ref, EnsureOpts{Progress: noop}); err == nil {
+				t.Fatalf("Ensure(ref=%q) = nil error, want rejection", ref)
+			}
+			if _, err := os.Stat(cache.Dir(root, e.Name)); !os.IsNotExist(err) {
+				t.Fatalf("Ensure(ref=%q) created a checkout (stat err = %v)", ref, err)
+			}
+		})
+	}
+}
+
+// TestEnsureValidRefWithSlash guards the other side of the validation: a
+// syntactically valid ref containing '/' must still clone normally.
+func TestEnsureValidRefWithSlash(t *testing.T) {
+	bare, _, sha := makeRepo(t)
+	gitT(t, bare, "branch", "release/1.0")
+	e := &manifest.Entry{Name: "tool", URL: bare, Transport: "git"}
+	root := t.TempDir()
+
+	dir, err := Ensure(root, e, "release/1.0", EnsureOpts{Progress: noop})
+	if err != nil {
+		t.Fatalf("Ensure(release/1.0): %v", err)
+	}
+	if got, err := headOf(t, dir); err != nil || got != sha {
+		t.Fatalf("HEAD = %s, want %s (err = %v)", got, sha, err)
+	}
+	if m, ok := ReadMarker(dir); !ok || m.Ref != "release/1.0" {
+		t.Fatalf("marker = %+v ok=%v, want ref=release/1.0", m, ok)
+	}
+}
+
+func TestWriteMarkerRejectsInvalidRef(t *testing.T) {
+	bare, tag, _ := makeRepo(t)
+	e := &manifest.Entry{Name: "tool", URL: bare, Transport: "git"}
+	root := t.TempDir()
+	dir, err := Ensure(root, e, tag, EnsureOpts{Progress: noop})
+	if err != nil {
+		t.Fatal(err)
+	}
+	markerPath := cache.Marker(dir)
+	before, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := WriteMarker(dir, "main\nfoo", 1); err == nil {
+		t.Fatal("WriteMarker accepted an invalid ref")
+	}
+	after, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("marker was overwritten:\nbefore: %s\nafter:  %s", before, after)
+	}
+}
+
 func TestEnsureRejectsInvalidDepth(t *testing.T) {
 	e := &manifest.Entry{Name: "tool", URL: "https://example.com/tool.git", Transport: "git"}
 	for _, depth := range []int{-2, -10} {
@@ -366,6 +450,66 @@ func TestEnsureSHAUpgrade(t *testing.T) {
 	assertHistory(t, dir, true, 3)
 	if got := strings.TrimSpace(gitT(t, dir, "rev-parse", "HEAD")); got != repo.tipSHA {
 		t.Fatalf("HEAD = %s, want %s", got, repo.tipSHA)
+	}
+}
+
+// TestEnsureDeepUpgradeDetachedRefs covers `--deep` on a detached tag and a
+// detached commit SHA: deepening must follow the checked-out commit, not the
+// remote default branch, and must leave a complete, non-shallow checkout.
+func TestEnsureDeepUpgradeDetachedRefs(t *testing.T) {
+	tests := []struct {
+		name        string
+		ref         func(historyRepo) string
+		wantHEAD    func(historyRepo) string
+		wantCommits int
+	}{
+		{
+			name:        "tag",
+			ref:         func(r historyRepo) string { return r.tag },
+			wantHEAD:    func(r historyRepo) string { return r.tagSHA },
+			wantCommits: 3,
+		},
+		{
+			name: "side SHA",
+			ref:  func(r historyRepo) string { return r.sideSHA },
+			// sideSHA is two commits past the tag, which itself has two
+			// ancestors on main: a complete checkout holds all five.
+			wantHEAD:    func(r historyRepo) string { return r.sideSHA },
+			wantCommits: 5,
+		},
+		{
+			name:        "main tip SHA",
+			ref:         func(r historyRepo) string { return r.tipSHA },
+			wantHEAD:    func(r historyRepo) string { return r.tipSHA },
+			wantCommits: 6,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := makeHistoryRepo(t)
+			e := &manifest.Entry{Name: "tool", URL: repo.url, Transport: "git"}
+			root := t.TempDir()
+			ref := tt.ref(repo)
+			wantHEAD := tt.wantHEAD(repo)
+
+			dir := ensureAt(t, root, e, ref, 1)
+			assertHistory(t, dir, true, 1)
+			if got := strings.TrimSpace(gitT(t, dir, "rev-parse", "HEAD")); got != wantHEAD {
+				t.Fatalf("HEAD after depth 1 = %s, want %s", got, wantHEAD)
+			}
+
+			upgraded := ensureAt(t, root, e, ref, DepthFull)
+			if upgraded != dir {
+				t.Fatalf("deep upgrade moved the checkout: %s != %s", upgraded, dir)
+			}
+			assertHistory(t, upgraded, false, tt.wantCommits)
+			if got := strings.TrimSpace(gitT(t, upgraded, "rev-parse", "HEAD")); got != wantHEAD {
+				t.Fatalf("HEAD after --deep = %s, want %s", got, wantHEAD)
+			}
+			if m, ok := ReadMarker(upgraded); !ok || m.Depth != DepthFull || m.Ref != ref {
+				t.Fatalf("marker = %+v ok=%v, want ref=%s depth=full", m, ok, ref)
+			}
+		})
 	}
 }
 
