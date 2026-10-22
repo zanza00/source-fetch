@@ -60,24 +60,36 @@ follow-up questions without going back online.
   `--depth N` (last N commits) to `path`, the default `<name>` fetch, or
   `peek`, for example `source-fetch path <name> --deep` or
   `source-fetch peek <url> --depth 50`. A cached shallow checkout is deepened
-  in place without moving HEAD, history is never reduced, and a failed upgrade
-  keeps the previous checkout. `update <name> --deep` forces a complete
-  re-clone instead.
+  in place without moving HEAD, history is never reduced for the same ref, and
+  a failed upgrade keeps the previous checkout. Changing the ref re-clones at
+  the requested depth. `update <name> --deep` forces a complete re-clone
+  instead.
 
 ## Peek details
 
 `peek` uses a separate ad-hoc cache and needs no manifest. `peek` with no URL
-lists ad-hoc trees; `rm <url>` drops one. Both accept the same web deep links,
-so `peek <repo>.git` and `rm <deep-link>` address the same cache entry. Peek
+lists ad-hoc trees with their ref and recorded depth; `rm` drops one. Both
+accept the same web deep links, URLs, local paths and scp-like URLs, so
+`peek <repo>.git` and `rm <deep-link>` address the same cache entry. Peek
 clones unreviewed code; it executes nothing from the repo, but read it before
 trusting it.
+
+Deep links cover source pages only: GitHub, GitLab, Codeberg/Gitea and generic
+hosts in their GitHub-like, Gitea or GitLab `/-/` forms. Issues, pull requests,
+compare, pipelines, Bitbucket/Azure deep links and `raw.githubusercontent.com`
+links are rejected. Bitbucket and Azure DevOps accept repository URLs only
+(Azure must not carry `?path=`), a single-segment generic-host deep link is
+ambiguous and rejected, and GHE behind a base path is rejected with a web
+marker or read as a repository path (failing at clone) without one. Use the
+repository URL in those cases.
 
 The ad-hoc cache key is canonical for trailing `/`, query/fragment, host case,
 default port, and `.git` on known hosts (GitHub, GitLab, Codeberg, Gitea).
 HTTP, SSH (`ssh://`), and scp-like (`git@host:path`) URLs remain distinct: use
 the same transport and spelling you used to fetch when you `rm`.
 
-For a local repository, use a `file://` URL from the first fetch, for example
-`source-fetch peek file:///absolute/path/to/repo`. Plain paths also work with
-`peek`, but `rm` interprets them as manifest names. Using `file://`
-consistently lets `rm <url>` find the same cache entry.
+For a local repository, use a `file://` URL or a local path from the first
+fetch, for example `source-fetch peek file:///absolute/path/to/repo` or
+`source-fetch peek ./repo`. `rm` resolves a manifest entry name first, then the
+ad-hoc cache. A bare relative name is matched against the manifest first; if it
+collides with an entry, use `./repo` to address the local path.

@@ -1,4 +1,5 @@
-// Package resolve implements version detection and ref resolution (§5).
+// Package resolve implements version detection, ref resolution (§5) and web
+// deep-link parsing (weburl.go).
 package resolve
 
 import (

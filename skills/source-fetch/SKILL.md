@@ -62,7 +62,8 @@ You can run these directly, before loading any guide:
   directly with `source-fetch peek <web-link> [ref]`. `peek` extracts the
   repository, ref, and path, and prints the local path of the linked file or
   directory; pass `ref` only to override the link or disambiguate a ref that
-  contains `/`.
+  contains `/`. Add `--deep` or `--depth N` when you need history for
+  `git log` or `git blame`.
 - Library or tool: `source-fetch path <name>` if `source-fetch list` shows
   it; otherwise `peek` its repository URL.
 - Both print the checkout directory on stdout. Reuse it for every later read.
@@ -72,5 +73,6 @@ You can run these directly, before loading any guide:
 - On demand only — nothing is fetched until asked.
 - Version-aware — resolve a tag from the installed version when configured.
 - Cached across runs — reuse dependency checkouts without vendoring them.
-- One-off `peek` — fetch any git URL once, in a separate ad-hoc cache.
+- One-off `peek` — fetch any git URL or web deep link once, in a separate
+  ad-hoc cache; shallow by default, with `--deep`/`--depth N` for history.
 - Agent-friendly — plain directory on stdout, progress on stderr.
