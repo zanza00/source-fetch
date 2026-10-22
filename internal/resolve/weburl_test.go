@@ -18,6 +18,18 @@ func TestParseWebURL(t *testing.T) {
 		url:  "https://github.com/o/r/blob/main/dir/file.go?plain=1#L42",
 		want: ParsedURL{RepoURL: "https://github.com/o/r", Ref: "main", Subpath: "dir/file.go"},
 	}, {
+		name:    "github blob with an empty ref segment",
+		url:     "https://github.com/o/r/blob//file.go",
+		wantErr: "empty path segment",
+	}, {
+		name:    "github tree with an empty ref segment",
+		url:     "https://github.com/o/r/tree//dir",
+		wantErr: "empty path segment",
+	}, {
+		name: "github blob with a dot ref segment",
+		url:  "https://github.com/o/r/blob/./main/dir/file.go",
+		want: ParsedURL{RepoURL: "https://github.com/o/r", Ref: "main", Subpath: "dir/file.go"},
+	}, {
 		name: "github tree",
 		url:  "https://github.com/o/r/tree/main/dir",
 		want: ParsedURL{RepoURL: "https://github.com/o/r", Ref: "main", Subpath: "dir"},

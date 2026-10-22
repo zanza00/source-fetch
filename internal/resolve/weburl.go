@@ -74,7 +74,10 @@ func ParseWebURL(rawURL, cliRef string) (ParsedURL, error) {
 		return ParsedURL{}, fmt.Errorf("invalid URL %q: missing host", raw)
 	}
 
-	segs := splitPathSegments(u.Path)
+	segs, err := splitPathSegments(u.Path)
+	if err != nil {
+		return ParsedURL{}, fmt.Errorf("invalid URL %q: %w", raw, err)
+	}
 	var (
 		repo     []string
 		ref, sub string
@@ -132,19 +135,31 @@ func ParseWebURL(rawURL, cliRef string) (ParsedURL, error) {
 	return ParsedURL{RepoURL: u.String(), Ref: ref, Subpath: sub}, nil
 }
 
-// splitPathSegments splits an URL path without a global path.Clean: empty and
-// "." segments are dropped, but ".." is preserved so traversal can be
+// splitPathSegments splits an URL path without a global path.Clean. Leading and
+// trailing slashes are ignored and "." segments are dropped (RFC 3986 treats
+// them as relative-path noise), but ".." is preserved so traversal can be
 // detected instead of silently rewriting the path.
-func splitPathSegments(p string) []string {
+//
+// An empty segment between non-empty ones (as in /blob//file) is malformed: it
+// would shift the ref and the subpath, so it is rejected instead of being
+// dropped. A trailing slash is not an empty segment.
+func splitPathSegments(p string) ([]string, error) {
+	p = strings.Trim(p, "/")
+	if p == "" {
+		return nil, nil
+	}
 	parts := strings.Split(p, "/")
 	out := make([]string, 0, len(parts))
 	for _, s := range parts {
-		if s == "" || s == "." {
+		switch s {
+		case "":
+			return nil, fmt.Errorf("empty path segment")
+		case ".":
 			continue
 		}
 		out = append(out, s)
 	}
-	return out
+	return out, nil
 }
 
 func parseGitHub(raw string, segs []string, cliRef string) ([]string, string, string, error) {
@@ -154,7 +169,7 @@ func parseGitHub(raw string, segs []string, cliRef string) ([]string, string, st
 	if len(segs) < 3 || !githubMarkers[segs[2]] {
 		return nil, "", "", fmt.Errorf("unsupported GitHub URL %q: only repository, blob, tree, commit, raw, blame and releases/tag links are supported", raw)
 	}
-	ref, sub, err := extractGitHubLike(segs[2], segs[3:], cliRef, raw)
+	ref, sub, err := extractRef(styleGitHub, segs[2], segs[3:], cliRef, raw)
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -170,7 +185,7 @@ func parseGitea(raw string, segs []string, site, cliRef string) ([]string, strin
 	if len(segs) < 3 || !giteaMarkers[segs[2]] {
 		return nil, "", "", fmt.Errorf("unsupported %s URL %q: only repository, src, commit, raw, blame and releases/tag links are supported", site, raw)
 	}
-	ref, sub, err := extractGitea(segs[2], segs[3:], cliRef, raw)
+	ref, sub, err := extractRef(styleGitea, segs[2], segs[3:], cliRef, raw)
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -185,7 +200,7 @@ func parseGitLab(raw string, segs []string, cliRef string) ([]string, string, st
 		if i < 2 {
 			return nil, "", "", fmt.Errorf("unsupported GitLab URL %q: missing repository path before /-/%s/ (expected namespace/project)", raw, kind)
 		}
-		ref, sub, err := extractGitLab(kind, segs[i+2:], cliRef, raw)
+		ref, sub, err := extractRef(styleGitLab, kind, segs[i+2:], cliRef, raw)
 		if err != nil {
 			return nil, "", "", err
 		}
@@ -257,21 +272,21 @@ func parseGeneric(raw string, segs []string, cliRef string) ([]string, string, s
 	// so a GitHub Enterprise ref literally named branch, tag or commit is
 	// ambiguous and parses as Gitea. See giteaRawShapeOK.
 	if giteaRawShapeOK(segs) {
-		ref, sub, err := extractGitea(segs[2], segs[3:], cliRef, raw)
+		ref, sub, err := extractRef(styleGitea, segs[2], segs[3:], cliRef, raw)
 		if err != nil {
 			return nil, "", "", err
 		}
 		return segs[:2], ref, sub, nil
 	}
 	if githubShapeOK(segs) {
-		ref, sub, err := extractGitHubLike(segs[2], segs[3:], cliRef, raw)
+		ref, sub, err := extractRef(styleGitHub, segs[2], segs[3:], cliRef, raw)
 		if err != nil {
 			return nil, "", "", err
 		}
 		return segs[:2], ref, sub, nil
 	}
 	if giteaShapeOK(segs) {
-		ref, sub, err := extractGitea(segs[2], segs[3:], cliRef, raw)
+		ref, sub, err := extractRef(styleGitea, segs[2], segs[3:], cliRef, raw)
 		if err != nil {
 			return nil, "", "", err
 		}
@@ -284,7 +299,7 @@ func parseGeneric(raw string, segs []string, cliRef string) ([]string, string, s
 		if i == 0 {
 			return nil, "", "", fmt.Errorf("unsupported URL form %q: missing repository path before /-/%s/", raw, kind)
 		}
-		ref, sub, err := extractGitLab(kind, segs[i+2:], cliRef, raw)
+		ref, sub, err := extractRef(styleGitLab, kind, segs[i+2:], cliRef, raw)
 		if err != nil {
 			return nil, "", "", err
 		}
@@ -390,85 +405,88 @@ func findGitLabMarker(segs []string) (int, string, bool) {
 	return 0, "", false
 }
 
-func extractGitHubLike(kind string, parts []string, cliRef, raw string) (string, string, error) {
+// linkStyle selects the site-specific rules for the segments after a web
+// marker.
+type linkStyle int
+
+const (
+	styleGitHub linkStyle = iota
+	styleGitLab
+	styleGitea
+)
+
+// extractRef parses the segments after a web marker (kind) according to the
+// site's link style. It is the single decoder for all three site families; the
+// differences are confined to the marker-specific cases below.
+func extractRef(style linkStyle, kind string, parts []string, cliRef, raw string) (string, string, error) {
 	switch kind {
 	case "blob", "tree", "raw", "blame":
+		// Gitea's raw/blame links carry an explicit branch/tag/commit
+		// selector; the other sites treat the next segment as the ref.
+		if style == styleGitea {
+			return giteaSelectorRef(kind, parts, cliRef, raw)
+		}
 		if len(parts) == 0 {
 			return "", "", fmt.Errorf("URL %q has no ref after /%s/", raw, kind)
 		}
 		ref, sub := splitRefAndPath(parts, cliRef)
 		return ref, sub, nil
+	case "src":
+		if style != styleGitea {
+			break
+		}
+		return giteaSelectorRef(kind, parts, cliRef, raw)
 	case "commit":
 		if len(parts) == 0 {
 			return "", "", fmt.Errorf("URL %q has no ref after /commit/", raw)
 		}
 		return parts[0], strings.Join(parts[1:], "/"), nil
 	case "releases":
+		if style == styleGitLab {
+			// GitLab's /-/releases/{tag} has no "tag" segment.
+			return tagRef(kind, parts, raw)
+		}
 		if len(parts) < 2 || parts[0] != "tag" {
 			return "", "", fmt.Errorf("URL %q has no tag after /releases/tag/", raw)
 		}
-		// A release/tag page has no subpath, so everything after the marker is
-		// the tag itself: tags may contain '/'.
+		// A release/tag page has no subpath, so everything after the marker
+		// is the tag itself: tags may contain '/'.
 		return strings.Join(parts[1:], "/"), "", nil
-	default:
-		return "", "", fmt.Errorf("unsupported URL form %q", raw)
+	case "tags":
+		if style != styleGitLab {
+			break
+		}
+		return tagRef(kind, parts, raw)
 	}
+	if style == styleGitLab {
+		return "", "", unsupportedGitLab(raw)
+	}
+	return "", "", fmt.Errorf("unsupported URL form %q", raw)
 }
 
-func extractGitea(marker string, rest []string, cliRef, raw string) (string, string, error) {
-	switch marker {
-	case "src", "raw", "blame":
-		if len(rest) < 2 {
-			return "", "", fmt.Errorf("URL %q has no ref after /%s/", raw, marker)
-		}
-		switch rest[0] {
-		case "branch", "tag":
-			ref, sub := splitRefAndPath(rest[1:], cliRef)
-			return ref, sub, nil
-		case "commit":
-			return rest[1], strings.Join(rest[2:], "/"), nil
-		default:
-			return "", "", fmt.Errorf("unsupported URL form %q: expected branch, tag or commit after /%s/", raw, marker)
-		}
-	case "releases":
-		if len(rest) < 2 || rest[0] != "tag" {
-			return "", "", fmt.Errorf("URL %q has no tag after /releases/tag/", raw)
-		}
-		// A release/tag page has no subpath, so everything after the marker is
-		// the tag itself: tags may contain '/'.
-		return strings.Join(rest[1:], "/"), "", nil
-	case "commit":
-		if len(rest) == 0 {
-			return "", "", fmt.Errorf("URL %q has no ref after /commit/", raw)
-		}
-		return rest[0], strings.Join(rest[1:], "/"), nil
-	default:
-		return "", "", fmt.Errorf("unsupported URL form %q", raw)
+// tagRef joins the segments after a tag/release marker. The whole remainder is
+// the tag, so tags may contain '/'.
+func tagRef(kind string, parts []string, raw string) (string, string, error) {
+	if len(parts) == 0 {
+		return "", "", fmt.Errorf("URL %q has no tag after /%s/", raw, kind)
 	}
+	return strings.Join(parts, "/"), "", nil
 }
 
-func extractGitLab(kind string, parts []string, cliRef, raw string) (string, string, error) {
-	switch kind {
-	case "blob", "tree", "raw", "blame":
-		if len(parts) == 0 {
-			return "", "", fmt.Errorf("URL %q has no ref after /%s/", raw, kind)
-		}
-		ref, sub := splitRefAndPath(parts, cliRef)
+// giteaSelectorRef parses Gitea's explicit branch/tag/commit selector after
+// src, raw or blame.
+func giteaSelectorRef(marker string, parts []string, cliRef, raw string) (string, string, error) {
+	if len(parts) < 2 {
+		return "", "", fmt.Errorf("URL %q has no ref after /%s/", raw, marker)
+	}
+	switch parts[0] {
+	case "branch", "tag":
+		ref, sub := splitRefAndPath(parts[1:], cliRef)
 		return ref, sub, nil
 	case "commit":
-		if len(parts) == 0 {
-			return "", "", fmt.Errorf("URL %q has no ref after /commit/", raw)
-		}
-		return parts[0], strings.Join(parts[1:], "/"), nil
-	case "tags", "releases":
-		if len(parts) == 0 {
-			return "", "", fmt.Errorf("URL %q has no tag after /%s/", raw, kind)
-		}
-		// A tag/release page has no subpath, so everything after the marker is
-		// the tag itself: tags may contain '/'.
-		return strings.Join(parts, "/"), "", nil
+		return parts[1], strings.Join(parts[2:], "/"), nil
 	default:
-		return "", "", unsupportedGitLab(raw)
+		return "", "", fmt.Errorf("unsupported URL form %q: expected branch, tag or commit after /%s/", raw, marker)
 	}
 }
 
