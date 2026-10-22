@@ -208,7 +208,8 @@ it falls back to the ad-hoc cache and accepts the same URLs, deep links, local
 paths and scp-like URLs as `peek`, so `peek <repo>.git` and `rm <deep-link>`
 address the same cache entry. A bare relative name is matched against the
 manifest first; if it collides with an entry, write `./repo` to address the
-local path.
+local path. `rm` takes exactly one argument; extra arguments are a usage error
+(`rm` never removes one tree and silently ignores the rest).
 
 Limits:
 
@@ -247,6 +248,9 @@ Limits:
 - Refs taken from a link are validated; invalid names (spaces, `..`, control
   characters, a leading `-`) are rejected and never fall back to the default
   branch.
+- An empty path segment such as `/{owner}/{repo}/blob//file` is rejected: it
+  would otherwise shift the ref and print the wrong file. `.` segments are
+  normalised away (RFC 3986).
 
 ## History depth
 
@@ -267,10 +271,12 @@ must be a positive integer.
 
 An existing checkout already at the requested ref is deepened in place: the
 directory and HEAD stay where they are, and a failed upgrade leaves the previous
-history intact. History is never reduced for the same ref, so `--depth N` is a
-no-op when the cache already has at least N commits or full history. Changing
-the requested ref re-clones at the requested depth. `update` is always a forced
-re-clone, at the requested depth.
+history intact. On a detached checkout the upgrade follows an exact tag name
+when one points at HEAD, so servers that refuse fetch-by-SHA still work; it
+falls back to the checked-out commit otherwise. History is never reduced for the
+same ref, so `--depth N` is a no-op when the cache already has at least N
+commits or full history. Changing the requested ref re-clones at the requested
+depth. `update` is always a forced re-clone, at the requested depth.
 
 ## Cache
 

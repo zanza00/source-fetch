@@ -534,8 +534,10 @@ non basta, errore.
 
 Rischio SHA: con HEAD detached su uno SHA, `git fetch origin <sha>` dipende
 dalla policy del server (`uploadpack.allowReachableSHA1InWant` /
-`uploadpack.allowAnySHA1InWant`). Se il server rifiuta lo SHA, l'upgrade
-fallisce ma il checkout esistente resta intatto.
+`uploadpack.allowAnySHA1InWant`). Per ridurre il rischio, `deepenTarget`
+preferisce il nome esatto del tag (`refs/tags/<tag>`) quando HEAD è su un tag;
+lo SHA resta il fallback per i commit detached senza tag. Se il server rifiuta
+il target, l'upgrade fallisce ma il checkout esistente resta intatto.
 
 **Mai chiamare `--depth N` quando la cache è già a profondità ≥ N**: git
 ridurrebbe la storia (verificato). Il no-op va fatto prima.
@@ -941,7 +943,22 @@ Correzioni applicate rispetto alla prima stesura del piano:
   fallisce al clone senza marker.
 - **Storia**: il "non ridurre mai" vale per lo stesso ref; cambiare ref
   ri-clona alla profondità richiesta. `deepen` usa il target del checkout
-  corrente (branch, SHA o HEAD), con il rischio policy-server per gli SHA.
+  corrente: branch attestato, tag esatto (`refs/tags/...`) o SHA. Il tag viene
+  preferito quando HEAD è esattamente su un tag, così i server che rifiutano il
+  fetch-by-SHA funzionano; lo SHA resta il fallback per i commit detached senza
+  tag. `depthSatisfied` resta l'autorità dopo il fetch.
+- **`rm`**: un solo argomento; gli argomenti extra sono un errore di usage
+  invece di essere ignorati. Su Windows `C:relative` è classificato come path
+  drive-relative da `cache.IsWindowsPath` (usato anche da `AdhocKey`), non come
+  URL scp-like; su Unix resta scp-like.
+- **Parser**: i segmenti vuoti interni (es. `/blob//file`) sono rifiutati con
+  `empty path segment`, invece di far slittare ref e subpath; i segmenti `.`
+  sono canonicalizzati (RFC 3986).
+- **Refactor interni** (nessun cambio di comportamento): `fetch.Depth` è un
+  tipo dedicato con `DepthUnknown`/`DepthDefault`/`DepthFull`; `cloneInto` e
+  `resetDir` possiedono la sequenza remove/mkdir/clone; `cmdFetch`/`cmdPath`
+  condividono `parseNamedTarget`; `extractRef` unifica i tre estrattori web
+  (GitHub, GitLab, Gitea) con un `linkStyle`.
 - **Marker/UI**: `depth=` è mostrato nella colonna `DEPTH` di `list` e `peek`
   come `full`, `N` o `-`.
 - **Test**: aggiunte le matrici per pagine GitLab, Gitea raw/blame, Codeberg
