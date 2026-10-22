@@ -1,7 +1,8 @@
 # Transports
 
 Today the only transport is `git`: `url` is a git remote URL and the fetch is a
-shallow `clone`/`checkout`.
+depth-aware `clone`/`checkout`. The default is shallow (one commit);
+`--deep` fetches complete history and `--depth N` fetches the last N commits.
 
 ## Seam for future transports
 

@@ -40,7 +40,7 @@ There is no watch mode; this is a CLI, not a server. Edit, build, test.
 ## Testing Instructions
 
 ```sh
-go test ./...           # all unit tests (21 tests across 7 packages)
+go test ./...           # all unit tests
 go test ./internal/fetch/          # one package
 go test ./internal/fetch/ -run TestName   # one test
 make smoke              # end-to-end smoke test
@@ -64,10 +64,12 @@ make smoke              # end-to-end smoke test
 cmd/source-fetch/      entrypoint (main.go only — logic lives in internal/)
 internal/cli/          command dispatch, version injection target
 internal/manifest/     manifest model, load, discovery
-internal/resolve/      version detection + ref precedence
-internal/fetch/        fetch algorithm + at-ref fast path + marker
-internal/cache/        cache root, manifest-id, clean guards
-internal/git/          git subprocess wrapper
+internal/resolve/      version detection, ref precedence + web deep-link parsing
+internal/fetch/        fetch algorithm + at-ref fast path + marker depth +
+                       history depth (--deep/--depth)
+internal/cache/        cache root, manifest-id, ad-hoc URL canonicalisation
+                       (AdhocKey/AdhocName), IsSCPLike, clean guards
+internal/git/          git subprocess wrapper + ValidateRef
 internal/skills/       skills served by the CLI (go:embed'd in data/)
 skills/source-fetch/   discovery stub (installed into agents via `npx skills add`)
 ```

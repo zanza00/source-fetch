@@ -14,6 +14,10 @@ binary to match the installed CLI version.
 - **Reusable cache** — keep dependency checkouts outside your project,
   namespaced by manifest.
 - **One-off `peek`** — fetch any git URL once, in a separate ad-hoc cache.
+- **Deep links** — paste a GitHub, GitLab, or Codeberg link to a file,
+  directory, commit, or tag and get the local path.
+- **History on demand** — shallow by default; `--deep` or `--depth N` when you
+  need `git log` or `git blame`.
 - **Agent-friendly** — prints a plain directory on stdout, progress on stderr.
 
 ## Install the CLI and skill
@@ -111,16 +115,20 @@ These are independent command examples. Named sources must already be in your
 manifest; the quick start above and `manifest.example.toml` configure `chezmoi`.
 
 ```
-source-fetch                      # list every entry: versions, refs, cache
+source-fetch                      # list every entry: versions, refs, depth, cache, age
 source-fetch path chezmoi         # fetch if needed, print dir (quiet stdout)
 source-fetch path chezmoi <subpath> # print a subpath inside the cached tree
+source-fetch path chezmoi --deep  # ensure full history for git log / blame
 cd "$(source-fetch path chezmoi)" # read the source
 source-fetch chezmoi v2.73.0       # ref override for this call
-source-fetch peek <url> [ref]     # one-off fetch of any git URL (ad-hoc cache)
+source-fetch chezmoi --depth 20    # fetch the last 20 commits
+source-fetch peek <url|web-link> [ref] [--deep | --depth N]
+                                  # one-off fetch of a git URL or deep link
 source-fetch peek                 # list ad-hoc cached trees
 source-fetch update chezmoi       # force re-clone at the resolved (pinned) ref
+source-fetch update chezmoi --deep # force a complete re-clone
 source-fetch rm chezmoi           # drop one cached tree
-source-fetch rm <url>             # drop one ad-hoc tree
+source-fetch rm <url|path>        # drop one ad-hoc tree
 source-fetch clean                # drop the cache for the current manifest
 source-fetch manifest             # which manifest is in use
 source-fetch manifest add <name> <url> [--version-cmd <cmd> ...]
@@ -169,25 +177,133 @@ There is no built-in manifest; `manifest add` creates one if needed.
 `source-fetch peek <url> [ref]` fetches a git URL that lives in no manifest —
 for reading the source of something you are investigating, once. It uses a
 separate ad-hoc cache, never touches a project namespace, and needs no manifest
-at all. `peek` with no URL lists the ad-hoc trees with their remote URLs;
-`rm <url>` drops one. Peek clones unreviewed code — it executes nothing from
-the repo, but read it before trusting it.
+at all. `peek` with no URL lists the ad-hoc trees with their remote URL, ref and
+recorded depth; `rm <url>` drops one. Peek clones unreviewed code — it executes
+nothing from the repo, but read it before trusting it.
+
+## Deep links
+
+`peek` also accepts a web link and prints the local path directly, so you can
+paste the URL from a browser instead of rebuilding it by hand:
+
+```sh
+source-fetch peek https://github.com/twpayne/chezmoi/blob/master/README.md
+# /…/adhoc/chezmoi-<keyhash>/README.md
+source-fetch peek https://github.com/twpayne/chezmoi/tree/master/internal
+# /…/adhoc/chezmoi-<keyhash>/internal
+```
+
+The ref and path are taken from the link. An explicit ref argument still wins
+when you pass one.
+
+| Host | Supported links |
+|---|---|
+| GitHub | `/{owner}/{repo}`, `/{owner}/{repo}/(blob\|raw\|blame)/{ref}/{path}`, `/{owner}/{repo}/tree/{ref}[/{path}]`, `/{owner}/{repo}/commit/{sha}[/{path}]`, `/{owner}/{repo}/releases/tag/{tag}` |
+| GitLab | `/{namespace…}/{repo}/-/blob/{ref}/{path}`, `/-/tree/{ref}[/{path}]`, `/-/raw/{ref}/{path}`, `/-/blame/{ref}/{path}`, `/-/commit/{sha}[/{path}]`, `/-/tags/{tag}`, `/-/releases/{tag}` |
+| Codeberg / Forgejo / Gitea | `/{owner}/{repo}/src/(branch\|tag)/{ref}[/{path}]`, `/{owner}/{repo}/src/commit/{sha}[/{path}]`, `/{owner}/{repo}/commit/{sha}[/{path}]`, `/{owner}/{repo}/(raw\|blame)/(branch\|tag\|commit)/{ref}/{path}`, `/{owner}/{repo}/releases/tag/{tag}` |
+| Generic Git host | `/-/…` (GitLab self-hosted), `/(raw\|blame)/(branch\|tag\|commit)/…` and `/src/(branch\|tag\|commit)/…` (Gitea self-hosted; the Gitea selector wins when a ref is named `branch`, `tag` or `commit`), and `/(blob\|tree\|commit\|raw\|blame)/…` after `/{owner}/{repo}` (GitHub Enterprise without a base path) |
+
+`rm` first resolves its argument as a manifest entry name. If no entry matches,
+it falls back to the ad-hoc cache and accepts the same URLs, deep links, local
+paths and scp-like URLs as `peek`, so `peek <repo>.git` and `rm <deep-link>`
+address the same cache entry. A bare relative name is matched against the
+manifest first; if it collides with an entry, write `./repo` to address the
+local path. `rm` takes exactly one argument; extra arguments are a usage error
+(`rm` never removes one tree and silently ignores the rest).
+
+Limits:
+
+- GitHub issues, pulls, actions, search and similar pages are rejected with an
+  error instead of being cloned as a repository.
+- GitLab treats `/-/` as reserved: only `blob`, `tree`, `commit`, `raw`,
+  `blame`, `tags` and `releases` pages are supported. Issues, commits, compare,
+  branches, pipelines and root-level pages are rejected instead of being
+  cloned. Legacy links without `/-/` are rejected on `gitlab.com`; on an
+  unknown host the same shape may be parsed as a GitHub-like source link or as
+  a repository path. Use the `/-/` form to be sure.
+- Bitbucket is accepted only as a repository link (`/{workspace}/{repo}`).
+  `src`, `raw`, commits, pull request and wiki pages are rejected instead of
+  being cloned as the repository.
+- Azure DevOps is supported only for repository URLs such as
+  `https://dev.azure.com/{org}/{project}/_git/{repo}` (and the legacy
+  `{org}.visualstudio.com` form). Deep links that carry the file path in the
+  `?path=` query parameter are rejected: the query would be dropped and the
+  repository root printed instead of the file.
+- `raw.githubusercontent.com` links are rejected: it is a raw-file CDN, not a
+  repository host.
+- GitHub Enterprise installations behind a base path (for example
+  `https://ghe.example.com/git/{owner}/{repo}/blob/{ref}/{path}`) are not
+  detected when the URL has no web marker: a link with a marker is rejected as
+  an unsupported URL form, while a repository URL is read as a repository path
+  and fails at clone time. GHE without a base path is supported.
+- On a generic host, a single-segment repository URL such as
+  `https://example.com/repo` is supported, but a deep link into it
+  (`/repo/blob/…`, `/repo/src/…`, `/repo/-/tree/…`) is ambiguous with a
+  two-segment repository and is rejected. Use the repository URL instead.
+- A ref containing `/` is ambiguous in file and tree links: without an explicit
+  ref, the first segment becomes the ref and the rest the subpath. Pass the ref
+  to disambiguate, for example `peek <url> release/1.0`. Release/tag pages are
+  not ambiguous: `releases/tag/release/1.0` and `/-/tags/release/1.0` join
+  everything after the marker as the tag.
+- Refs taken from a link are validated; invalid names (spaces, `..`, control
+  characters, a leading `-`) are rejected and never fall back to the default
+  branch.
+- An empty path segment such as `/{owner}/{repo}/blob//file` is rejected: it
+  would otherwise shift the ref and print the wrong file. `.` segments are
+  normalised away (RFC 3986).
+
+## History depth
+
+Checkouts are shallow by default: one commit, enough to read the current tree.
+`git log`, `git blame`, and history searches need more:
+
+```sh
+source-fetch path chezmoi --depth 20   # last 20 commits
+source-fetch path chezmoi --deep       # complete history
+source-fetch peek <url> --depth 50
+source-fetch update chezmoi --deep     # forced complete re-clone
+```
+
+The flags work after the command for `path`, the default `<name>` fetch,
+`peek`, and `update`; `source-fetch --deep <name>` is also accepted for the
+default fetch. `--deep` and `--depth` are mutually exclusive, and `--depth`
+must be a positive integer.
+
+An existing checkout already at the requested ref is deepened in place: the
+directory and HEAD stay where they are, and a failed upgrade leaves the previous
+history intact. On a detached checkout the upgrade follows an exact tag name
+when one points at HEAD, so servers that refuse fetch-by-SHA still work; it
+falls back to the checked-out commit otherwise. History is never reduced for the
+same ref, so `--depth N` is a no-op when the cache already has at least N
+commits or full history. Changing the requested ref re-clones at the requested
+depth. `update` is always a forced re-clone, at the requested depth.
 
 ## Cache
 
 By default, `<base>` is `$XDG_CACHE_HOME` or the platform's user cache directory:
 `~/.cache` on Linux, `~/Library/Caches` on macOS, and `%LocalAppData%` on Windows.
 Manifest entries live at `<base>/source-fetch/<manifest-id>/<name>`;
-one-off `peek` trees live at `<base>/source-fetch/adhoc/<repo-basename>-<urlhash>`.
+one-off `peek` trees live at `<base>/source-fetch/adhoc/<repo-basename>-<keyhash>`.
 
 With `$SOURCE_FETCH_CACHE`, entries instead live at `<override>/<name>` and
-peek trees at `<override>/adhoc/<repo-basename>-<urlhash>`, without a per-manifest
-namespace.
+peek trees at `<override>/adhoc/<repo-basename>-<keyhash>`, without a
+per-manifest namespace.
 
 - `<manifest-id>` is the basename of the git toplevel owning the manifest, else
   `path-<hash>`.
-- Ad-hoc names are `<repo-basename>-<urlhash>`: same-named repos never collide.
-- Each tree is a plain git checkout with a `.source-fetch-ref` marker.
+- Ad-hoc names are `<repo-basename>-<keyhash>`: same-named repos never collide.
+  The hash is the first 8 hex characters of sha256 over a canonical key, so
+  spelling variants of the same repository (trailing `/`, query/fragment, host
+  case, default port, and `.git` on known hosts) share one tree. HTTP, SSH and
+  scp-like URLs stay distinct. Trees created by versions before this
+  canonicalisation are not migrated and may remain orphaned; they are
+  disposable.
+- Each tree is a plain git checkout with a `.source-fetch-ref` marker recording
+  the requested ref, actual HEAD commit, fetch time and history depth
+  (`depth=1|N|full`). Markers written by older versions have no `depth=` and
+  are still read; the recorded depth is informational (shown in the `DEPTH`
+  column of `list` and `peek`) because the real git state decides whether an
+  upgrade is needed.
 - `$SOURCE_FETCH_CACHE` overrides the root entirely (no namespace).
 - The cache is safe to delete at any time; `clean` refuses to run on
   empty/`/`/`$HOME`. Normally `clean` removes only the current manifest's cache;

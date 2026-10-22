@@ -58,10 +58,12 @@ follow-up questions without going back online.
 
 You can run these directly, before loading any guide:
 
-- Source link from GitHub, Codeberg, GitLab, or another Git host:
-  `source-fetch peek <clone-url> [ref]`, passing the branch, tag, or commit
-  from the link as `ref` when it is clear; then open the linked path in the
-  checkout.
+- Source link from GitHub, Codeberg, GitLab, or another Git host: paste it
+  directly with `source-fetch peek <web-link> [ref]`. `peek` extracts the
+  repository, ref, and path, and prints the local path of the linked file or
+  directory; pass `ref` only to override the link or disambiguate a ref that
+  contains `/`. Add `--deep` or `--depth N` when you need history for
+  `git log` or `git blame`.
 - Library or tool: `source-fetch path <name>` if `source-fetch list` shows
   it; otherwise `peek` its repository URL.
 - Both print the checkout directory on stdout. Reuse it for every later read.
@@ -71,5 +73,6 @@ You can run these directly, before loading any guide:
 - On demand only — nothing is fetched until asked.
 - Version-aware — resolve a tag from the installed version when configured.
 - Cached across runs — reuse dependency checkouts without vendoring them.
-- One-off `peek` — fetch any git URL once, in a separate ad-hoc cache.
+- One-off `peek` — fetch any git URL or web deep link once, in a separate
+  ad-hoc cache; shallow by default, with `--deep`/`--depth N` for history.
 - Agent-friendly — plain directory on stdout, progress on stderr.

@@ -1,8 +1,9 @@
 // Package git is a thin wrapper around the external git binary.
 //
 // source-fetch deliberately shells out to git instead of using a pure-Go
-// implementation: it preserves the exact shallow-clone/--branch and
-// commit-SHA fetch semantics described in the spec (§7).
+// implementation: it preserves the exact depth-aware clone/fetch, --branch and
+// commit-SHA semantics described in the spec (§7). Ref validation lives in
+// ref.go (ValidateRef).
 package git
 
 import (

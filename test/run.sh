@@ -102,6 +102,68 @@ pass "peek list"
 [ ! -d "$out_p" ] || fail "peek rm"
 pass "peek rm"
 
+# --- history depth: six commits, a tag on the third -------------------------
+hwork="$tmp/hwork"
+git init -q "$hwork"
+git -C "$hwork" symbolic-ref HEAD refs/heads/main
+git -C "$hwork" config user.email t@example.com
+git -C "$hwork" config user.name t
+for i in 1 2 3 4 5 6; do
+  echo "$i" >"$hwork/file$i.txt"
+  git -C "$hwork" add .
+  git -C "$hwork" commit -q -m "commit $i"
+  if [ "$i" = 3 ]; then git -C "$hwork" tag v1.0.0; fi
+done
+hbare="$tmp/hbare.git"
+git clone -q --bare "$hwork" "$hbare"
+hurl="file://$hbare"
+
+"$bin" manifest add hist "$hurl" >/dev/null 2>&1 || fail "manifest add hist"
+
+hist_out="$("$bin" path hist --depth 3)"
+[ "$(git -C "$hist_out" rev-list --count HEAD)" = 3 ] || fail "path --depth 3"
+[ "$(git -C "$hist_out" rev-parse --is-shallow-repository)" = true ] || fail "path --depth 3 not shallow"
+pass "path --depth 3"
+
+# A shallower request is a no-op: history is never reduced.
+"$bin" path hist --depth 2 >/dev/null || fail "path --depth 2 no-op"
+[ "$(git -C "$hist_out" rev-list --count HEAD)" = 3 ] || fail "--depth reduced history"
+pass "--depth does not reduce history"
+
+"$bin" update hist --deep >/dev/null || fail "update --deep"
+[ "$(git -C "$hist_out" rev-list --count HEAD)" = 6 ] || fail "update --deep did not fetch full history"
+[ "$(git -C "$hist_out" rev-parse --is-shallow-repository)" = false ] || fail "update --deep still shallow"
+pass "update --deep"
+
+# update without flags stays shallow.
+"$bin" update hist >/dev/null || fail "update default"
+[ "$(git -C "$hist_out" rev-list --count HEAD)" = 1 ] || fail "update default not shallow"
+pass "update stays shallow"
+
+# A leading depth flag routes to the default fetch command.
+"$bin" --deep hist >/dev/null || fail "--deep default fetch"
+[ "$(git -C "$hist_out" rev-list --count HEAD)" = 6 ] || fail "leading --deep did not fetch full history"
+pass "leading --deep"
+
+if "$bin" path hist --depth 0 >/dev/null 2>&1; then fail "--depth 0 accepted"; fi
+if "$bin" path hist --deep --depth 2 >/dev/null 2>&1; then fail "--deep with --depth accepted"; fi
+pass "depth flag validation"
+
+# --- deep link through insteadOf (offline) ----------------------------------
+gitconfig="$tmp/gitconfig"
+cat >"$gitconfig" <<EOF
+[url "$hurl"]
+	insteadOf = https://github.com/acme/tool
+EOF
+link_out="$(GIT_CONFIG_GLOBAL="$gitconfig" GIT_CONFIG_NOSYSTEM=1 \
+  "$bin" peek https://github.com/acme/tool/blob/main/file1.txt --depth 3)"
+[ -f "$link_out" ] || fail "deep link did not print an existing file"
+link_dir="$(dirname "$link_out")"
+[ "$(git -C "$link_dir" rev-list --count HEAD)" = 3 ] || fail "deep link ignored --depth 3"
+GIT_CONFIG_GLOBAL="$gitconfig" GIT_CONFIG_NOSYSTEM=1 \
+  "$bin" rm https://github.com/acme/tool >/dev/null 2>&1 || fail "rm deep link"
+pass "deep link with --depth"
+
 # --- rm + clean -------------------------------------------------------------
 "$bin" rm tool >/dev/null 2>&1
 [ ! -d "$out" ] || fail "rm did not delete"
