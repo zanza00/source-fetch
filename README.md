@@ -14,6 +14,8 @@ binary to match the installed CLI version.
 - **Reusable cache** — keep dependency checkouts outside your project,
   namespaced by manifest.
 - **One-off `peek`** — fetch any git URL once, in a separate ad-hoc cache.
+- **Deep links** — paste a GitHub, GitLab, or Codeberg link to a file,
+  directory, commit, or tag and get the local path.
 - **Agent-friendly** — prints a plain directory on stdout, progress on stderr.
 
 ## Install the CLI and skill
@@ -116,7 +118,8 @@ source-fetch path chezmoi         # fetch if needed, print dir (quiet stdout)
 source-fetch path chezmoi <subpath> # print a subpath inside the cached tree
 cd "$(source-fetch path chezmoi)" # read the source
 source-fetch chezmoi v2.73.0       # ref override for this call
-source-fetch peek <url> [ref]     # one-off fetch of any git URL (ad-hoc cache)
+source-fetch peek <url|web-link> [ref]
+                                  # one-off fetch of a git URL or deep link
 source-fetch peek                 # list ad-hoc cached trees
 source-fetch update chezmoi       # force re-clone at the resolved (pinned) ref
 source-fetch rm chezmoi           # drop one cached tree
@@ -173,6 +176,43 @@ at all. `peek` with no URL lists the ad-hoc trees with their remote URLs;
 `rm <url>` drops one. Peek clones unreviewed code — it executes nothing from
 the repo, but read it before trusting it.
 
+## Deep links
+
+`peek` also accepts a web link and prints the local path directly, so you can
+paste the URL from a browser instead of rebuilding it by hand:
+
+```sh
+source-fetch peek https://github.com/twpayne/chezmoi/blob/master/README.md
+# /…/adhoc/chezmoi-<hash>/README.md
+source-fetch peek https://github.com/twpayne/chezmoi/tree/master/internal
+# /…/adhoc/chezmoi-<hash>/internal
+```
+
+The ref and path are taken from the link. An explicit ref argument still wins
+when you pass one.
+
+| Host | Supported links |
+|---|---|
+| GitHub | `/{owner}/{repo}`, `/{owner}/{repo}/(blob\|raw\|blame)/{ref}/{path}`, `/{owner}/{repo}/tree/{ref}[/{path}]`, `/{owner}/{repo}/commit/{sha}[/{path}]`, `/{owner}/{repo}/releases/tag/{tag}` |
+| GitLab | `/{namespace…}/{repo}/-/blob/{ref}/{path}`, `/-/tree/{ref}[/{path}]`, `/-/raw/{ref}/{path}`, `/-/blame/{ref}/{path}`, `/-/commit/{sha}[/{path}]`, `/-/tags/{tag}`, `/-/releases/{tag}` |
+| Codeberg / Forgejo / Gitea | `/{owner}/{repo}/src/(branch\|tag)/{ref}[/{path}]`, `/{owner}/{repo}/src/commit/{sha}[/{path}]`, `/{owner}/{repo}/(raw\|blame)/(branch\|tag\|commit)/{ref}/{path}`, `/{owner}/{repo}/releases/tag/{tag}` |
+| Generic Git host | `/-/…` (GitLab self-hosted), `/src/(branch\|tag\|commit)/…` (Gitea self-hosted), and `/(blob\|tree\|commit\|raw\|blame)/…` at the second path segment (GitHub Enterprise without a base path) |
+
+`rm` accepts the same links, so `peek <repo>.git` and
+`rm <deep-link>` address the same cache entry.
+
+Limits:
+
+- GitHub issues, pulls, actions, search and similar pages are rejected with an
+  error instead of being cloned as a repository.
+- GitLab legacy links without `/-/` are rejected on `gitlab.com`. On an
+  unknown host they may be read as a repository path and fail at clone time.
+- Bitbucket, Azure DevOps, `raw.githubusercontent.com` and GitHub Enterprise
+  installations behind a base path are not supported.
+- A ref containing `/` is ambiguous in a URL: without an explicit ref, the
+  first segment becomes the ref and the rest the subpath. Pass the ref to
+  disambiguate, for example `peek <url> release/1.0`.
+
 ## Cache
 
 By default, `<base>` is `$XDG_CACHE_HOME` or the platform's user cache directory:
@@ -187,6 +227,11 @@ namespace.
 - `<manifest-id>` is the basename of the git toplevel owning the manifest, else
   `path-<hash>`.
 - Ad-hoc names are `<repo-basename>-<urlhash>`: same-named repos never collide.
+  The hash is computed from a canonical key, so spelling variants of the same
+  repository (trailing `/`, query/fragment, host case, default port, and `.git`
+  on known hosts) share one tree. HTTP, SSH and scp-like URLs stay distinct.
+  Trees created by versions before this canonicalisation are not migrated and
+  may remain orphaned; they are disposable.
 - Each tree is a plain git checkout with a `.source-fetch-ref` marker.
 - `$SOURCE_FETCH_CACHE` overrides the root entirely (no namespace).
 - The cache is safe to delete at any time; `clean` refuses to run on

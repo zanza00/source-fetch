@@ -2,10 +2,13 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"testing"
@@ -158,6 +161,7 @@ func makeBareRepo(t *testing.T) string {
 		t.Fatal(err)
 	}
 	gitT(t, work, "init", "-q")
+	gitT(t, work, "symbolic-ref", "HEAD", "refs/heads/main")
 	gitT(t, work, "config", "user.email", "t@example.com")
 	gitT(t, work, "config", "user.name", "t")
 	if err := os.WriteFile(filepath.Join(work, "file.txt"), []byte("hello\n"), 0o644); err != nil {
@@ -326,6 +330,220 @@ func TestManifestAddSetRm(t *testing.T) {
 	run(1, "manifest", "rm", "x")
 	if _, err := os.Stat(missing); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("rm created %s", missing)
+	}
+}
+
+// runCLI runs the CLI with stdout and stderr captured.
+func runCLI(t *testing.T, args ...string) (code int, stdout, stderr string) {
+	t.Helper()
+	stdout = captureStdout(t, func() {
+		stderr = captureStderr(t, func() { code = Run(args) })
+	})
+	return code, stdout, stderr
+}
+
+// fileURL builds a portable file:// URL for a local path.
+func fileURL(p string) string {
+	p = filepath.ToSlash(p)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p // Windows: C:/… → /C:/…
+	}
+	return (&url.URL{Scheme: "file", Path: p}).String()
+}
+
+// useInsteadOf rewrites an HTTPS repository URL to a local bare repo through a
+// temporary global git config. It keeps deep-link CLI tests fully offline.
+func useInsteadOf(t *testing.T, bare, base string) {
+	t.Helper()
+	cfg := filepath.Join(t.TempDir(), "gitconfig")
+	body := fmt.Sprintf("[url %q]\n\tinsteadOf = %s\n\tinsteadOf = %s.git\n",
+		fileURL(bare), base, base)
+	if err := os.WriteFile(cfg, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", cfg)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+}
+
+func TestPeekDeepLink(t *testing.T) {
+	bare := makeBareRepo(t)
+	base := "https://github.com/acme/tool"
+	useInsteadOf(t, bare, base)
+	t.Setenv(cache.EnvCache, t.TempDir())
+
+	code, out, stderr := runCLI(t, "peek", base+"/blob/main/file.txt")
+	if code != 0 {
+		t.Fatalf("peek exit code = %d: %s", code, stderr)
+	}
+	file := strings.TrimSpace(out)
+	if got := filepath.Base(file); got != "file.txt" {
+		t.Fatalf("peek printed %q, want a file.txt path", file)
+	}
+	if data, err := os.ReadFile(file); err != nil || string(data) != "hello\n" {
+		t.Fatalf("linked file content = %q, err = %v", data, err)
+	}
+
+	// Second peek of the same deep link reuses the checkout (offline fast path).
+	code, out2, stderr := runCLI(t, "peek", base+"/blob/main/file.txt")
+	if code != 0 {
+		t.Fatalf("second peek exit code = %d: %s", code, stderr)
+	}
+	if strings.TrimSpace(out2) != file {
+		t.Fatalf("second peek = %q, want %q", strings.TrimSpace(out2), file)
+	}
+
+	// A tree link prints the checkout directory.
+	code, out3, stderr := runCLI(t, "peek", base+"/tree/main")
+	if code != 0 {
+		t.Fatalf("tree peek exit code = %d: %s", code, stderr)
+	}
+	dir := strings.TrimSpace(out3)
+	if !fetch.HasGit(dir) {
+		t.Fatalf("tree peek printed %q, want a checkout", dir)
+	}
+	if filepath.Dir(file) != dir {
+		t.Fatalf("file dir = %q, want %q", filepath.Dir(file), dir)
+	}
+}
+
+func TestRmCanonicalizesDeepLink(t *testing.T) {
+	bare := makeBareRepo(t)
+	base := "https://github.com/acme/tool"
+	useInsteadOf(t, bare, base)
+	t.Setenv(cache.EnvCache, t.TempDir())
+
+	code, out, stderr := runCLI(t, "peek", base+".git")
+	if code != 0 {
+		t.Fatalf("peek exit code = %d: %s", code, stderr)
+	}
+	dir := strings.TrimSpace(out)
+	if !fetch.HasGit(dir) {
+		t.Fatalf("peek printed %q, want a checkout", dir)
+	}
+
+	code, _, stderr = runCLI(t, "rm", base+"/tree/main")
+	if code != 0 {
+		t.Fatalf("rm exit code = %d: %s", code, stderr)
+	}
+	if fetch.HasGit(dir) {
+		t.Fatalf("rm of a deep link did not remove %s", dir)
+	}
+}
+
+func TestPeekDeepLinkMissingPath(t *testing.T) {
+	bare := makeBareRepo(t)
+	base := "https://github.com/acme/tool"
+	useInsteadOf(t, bare, base)
+	t.Setenv(cache.EnvCache, t.TempDir())
+
+	code, out, stderr := runCLI(t, "peek", base+"/blob/main/nope")
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("stdout = %q, want no phantom path", out)
+	}
+	if !strings.Contains(stderr, "not found") {
+		t.Fatalf("stderr = %q, want a not-found error", stderr)
+	}
+}
+
+func TestPeekDeepLinkSymlinkEscape(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks may require extra privileges on Windows")
+	}
+	bare := makeBareRepo(t)
+	base := "https://github.com/acme/tool"
+	useInsteadOf(t, bare, base)
+	t.Setenv(cache.EnvCache, t.TempDir())
+
+	code, out, stderr := runCLI(t, "peek", base+"/tree/main")
+	if code != 0 {
+		t.Fatalf("peek exit code = %d: %s", code, stderr)
+	}
+	dir := strings.TrimSpace(out)
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(dir, "escape")); err != nil {
+		t.Skipf("cannot create symlink: %v", err)
+	}
+
+	code, out, stderr = runCLI(t, "peek", base+"/blob/main/escape")
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("stdout = %q, want no path", out)
+	}
+	if !strings.Contains(stderr, "resolves outside the checkout") {
+		t.Fatalf("stderr = %q, want a symlink-escape error", stderr)
+	}
+}
+
+func TestPeekRejectsUnsupportedWebURLs(t *testing.T) {
+	bare := makeBareRepo(t)
+	base := "https://github.com/acme/tool"
+	useInsteadOf(t, bare, base)
+	cacheRoot := t.TempDir()
+	t.Setenv(cache.EnvCache, cacheRoot)
+
+	for _, link := range []string{base + "/issues/1", base + "/pulls/2"} {
+		code, out, stderr := runCLI(t, "peek", link)
+		if code != 1 {
+			t.Fatalf("peek %s exit code = %d, want 1", link, code)
+		}
+		if strings.TrimSpace(out) != "" {
+			t.Fatalf("peek %s printed %q", link, out)
+		}
+		if !strings.Contains(stderr, "unsupported GitHub URL") {
+			t.Fatalf("peek %s stderr = %q", link, stderr)
+		}
+	}
+	if entries, err := os.ReadDir(filepath.Join(cacheRoot, "adhoc")); err == nil && len(entries) > 0 {
+		t.Fatalf("unsupported URLs created cache entries: %v", entries)
+	}
+}
+
+func TestPathSubpathValidation(t *testing.T) {
+	bare := makeBareRepo(t)
+	manifestPath := filepath.Join(t.TempDir(), manifest.CanonicalName)
+	t.Setenv(manifest.EnvManifest, manifestPath)
+	t.Setenv(cache.EnvCache, t.TempDir())
+
+	code, _, stderr := runCLI(t, "manifest", "add", "tool", bare)
+	if code != 0 {
+		t.Fatalf("manifest add exit code = %d: %s", code, stderr)
+	}
+
+	code, out, stderr := runCLI(t, "path", "tool", "file.txt")
+	if code != 0 {
+		t.Fatalf("path exit code = %d: %s", code, stderr)
+	}
+	if got := filepath.Base(strings.TrimSpace(out)); got != "file.txt" {
+		t.Fatalf("path printed %q, want a file.txt path", out)
+	}
+
+	code, out, stderr = runCLI(t, "path", "tool", "nope")
+	if code != 1 {
+		t.Fatalf("missing subpath exit code = %d, want 1", code)
+	}
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("missing subpath printed %q", out)
+	}
+	if !strings.Contains(stderr, "not found") {
+		t.Fatalf("missing subpath stderr = %q", stderr)
+	}
+
+	for _, sub := range []string{"../escape", "/etc/passwd"} {
+		code, out, stderr = runCLI(t, "path", "tool", sub)
+		if code != 1 {
+			t.Fatalf("path %q exit code = %d, want 1", sub, code)
+		}
+		if strings.TrimSpace(out) != "" {
+			t.Fatalf("path %q printed %q", sub, out)
+		}
+		if !strings.Contains(stderr, "escapes the repository") {
+			t.Fatalf("path %q stderr = %q", sub, stderr)
+		}
 	}
 }
 

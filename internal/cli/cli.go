@@ -176,15 +176,53 @@ func cmdPath(args []string) error {
 		return err
 	}
 	if sub != "" {
-		dir = filepath.Join(dir, sub)
+		dir, err = subpathPath(dir, sub)
+		if err != nil {
+			return err
+		}
 	}
 	fmt.Println(dir)
 	return nil
 }
 
+// subpathPath joins sub to dir, verifies it exists and that symlinks cannot
+// escape the checkout, and returns the stable lexical path.
+func subpathPath(dir, sub string) (string, error) {
+	cleaned := filepath.Clean(filepath.FromSlash(sub))
+	if cleaned == "." {
+		return dir, nil
+	}
+	if !filepath.IsLocal(cleaned) {
+		return "", fmt.Errorf("path %q escapes the repository", sub)
+	}
+	p := filepath.Join(dir, cleaned)
+	if _, err := os.Stat(p); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("path %q not found in checkout %s", sub, dir)
+		}
+		return "", err
+	}
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", err
+	}
+	realP, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(realDir, realP)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path %q resolves outside the checkout", sub)
+	}
+	return p, nil
+}
+
 // cmdPeek implements one-off fetches of URLs that live in no manifest: fetch
-// (into the ad-hoc cache) and print the directory. With no URL it lists the
-// ad-hoc cache.
+// (into the ad-hoc cache) and print the directory. URLs may also be web links
+// to a file, directory, commit or tag. With no URL it lists the ad-hoc cache.
 func cmdPeek(args []string) error {
 	root, err := cache.AdhocRoot()
 	if err != nil {
@@ -193,15 +231,28 @@ func cmdPeek(args []string) error {
 	if len(args) == 0 {
 		return listAdhoc(root)
 	}
-	url := args[0]
+	if len(args) > 2 {
+		return fmt.Errorf("usage: peek <url> [ref]")
+	}
 	cliRef := ""
 	if len(args) > 1 {
 		cliRef = args[1]
 	}
-	e := &manifest.Entry{Name: cache.AdhocName(url), URL: url, Transport: "git"}
-	dir, err := fetch.Ensure(root, e, resolve.Ref(e, cliRef), false, progress)
+	parsed, err := resolve.ParseWebURL(args[0], cliRef)
 	if err != nil {
 		return err
+	}
+	ref := cmp.Or(cliRef, parsed.Ref)
+	e := &manifest.Entry{Name: cache.AdhocName(parsed.RepoURL), URL: parsed.RepoURL, Transport: "git"}
+	dir, err := fetch.Ensure(root, e, ref, false, progress)
+	if err != nil {
+		return err
+	}
+	if parsed.Subpath != "" {
+		dir, err = subpathPath(dir, parsed.Subpath)
+		if err != nil {
+			return err
+		}
 	}
 	fmt.Println(dir)
 	return nil
@@ -276,7 +327,11 @@ func cmdRm(args []string) error {
 		if err != nil {
 			return err
 		}
-		dir = cache.Dir(root, cache.AdhocName(target))
+		parsed, err := resolve.ParseWebURL(target, "")
+		if err != nil {
+			return err
+		}
+		dir = cache.Dir(root, cache.AdhocName(parsed.RepoURL))
 	} else {
 		_, _, root, err := entry(target)
 		if err != nil {

@@ -20,10 +20,12 @@ follow-up questions without going back online.
   `source-fetch list` (or bare `source-fetch`) in the project directory to see
   configured names with version, resolved ref, cache path and age; the ref
   column does not verify the cached checkout.
-- Link to source on a Git host: `source-fetch peek <clone-url> [ref]`. For a
-  file or directory link, use the repository's clone URL, pass the branch,
-  tag, or commit from the link as `ref` when it is clear, and open that path
-  in the checkout.
+- Link to source on a Git host: paste the link directly —
+  `source-fetch peek <web-link> [ref]`. `peek` extracts the repository, ref
+  and path from GitHub, GitLab, and Codeberg file, directory, commit, and tag
+  links, and prints the local path of the linked file or directory. Pass `ref`
+  only to override the ref in the link, or to disambiguate a ref that
+  contains `/` (for example `peek <url> release/1.0`).
 - Library or tool that is not configured: find its repository URL (package
   metadata, module path, or project homepage) and `peek` it, passing the tag
   of the installed version as `ref` when you know it. If you will revisit it,
@@ -56,11 +58,17 @@ follow-up questions without going back online.
 ## Peek details
 
 `peek` uses a separate ad-hoc cache and needs no manifest. `peek` with no URL
-lists ad-hoc trees; `rm <url>` drops one. Peek clones unreviewed code; it
-executes nothing from the repo, but read it before trusting it.
+lists ad-hoc trees; `rm <url>` drops one. Both accept the same web deep links,
+so `peek <repo>.git` and `rm <deep-link>` address the same cache entry. Peek
+clones unreviewed code; it executes nothing from the repo, but read it before
+trusting it.
+
+The ad-hoc cache key is canonical for trailing `/`, query/fragment, host case,
+default port, and `.git` on known hosts (GitHub, GitLab, Codeberg, Gitea).
+HTTP, SSH (`ssh://`), and scp-like (`git@host:path`) URLs remain distinct: use
+the same transport and spelling you used to fetch when you `rm`.
 
 For a local repository, use a `file://` URL from the first fetch, for example
 `source-fetch peek file:///absolute/path/to/repo`. Plain paths also work with
-`peek`, but `rm` interprets them as manifest names. Using `file://` consistently
-lets `rm <url>` find the same cache entry; changing the URL spelling creates a
-different entry.
+`peek`, but `rm` interprets them as manifest names. Using `file://`
+consistently lets `rm <url>` find the same cache entry.

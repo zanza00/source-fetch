@@ -58,10 +58,11 @@ follow-up questions without going back online.
 
 You can run these directly, before loading any guide:
 
-- Source link from GitHub, Codeberg, GitLab, or another Git host:
-  `source-fetch peek <clone-url> [ref]`, passing the branch, tag, or commit
-  from the link as `ref` when it is clear; then open the linked path in the
-  checkout.
+- Source link from GitHub, Codeberg, GitLab, or another Git host: paste it
+  directly with `source-fetch peek <web-link> [ref]`. `peek` extracts the
+  repository, ref, and path, and prints the local path of the linked file or
+  directory; pass `ref` only to override the link or disambiguate a ref that
+  contains `/`.
 - Library or tool: `source-fetch path <name>` if `source-fetch list` shows
   it; otherwise `peek` its repository URL.
 - Both print the checkout directory on stdout. Reuse it for every later read.
