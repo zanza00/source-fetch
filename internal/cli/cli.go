@@ -115,7 +115,8 @@ func isFetchFlag(arg string) bool {
 		return false
 	}
 	name, _, _ := strings.Cut(strings.TrimPrefix(arg, "--"), "=")
-	return name == "deep" || name == "depth"
+	_, ok := fetchFlags[name]
+	return ok
 }
 
 func progress(format string, args ...any) {
@@ -187,6 +188,20 @@ func parseDepthFlags(flags map[string]string) (int, error) {
 	return fetch.DepthDefault, nil
 }
 
+// fetchTarget parses the history flags and resolves name through the manifest.
+// It is the shared prologue of the commands that fetch a named entry.
+func fetchTarget(name string, flags map[string]string) (int, *manifest.Entry, string, error) {
+	depth, err := parseDepthFlags(flags)
+	if err != nil {
+		return 0, nil, "", err
+	}
+	_, e, root, err := entry(name)
+	if err != nil {
+		return 0, nil, "", err
+	}
+	return depth, e, root, nil
+}
+
 func cmdFetch(args []string) error {
 	pos, flags, err := parseFlags(args, fetchFlags)
 	if err != nil {
@@ -203,11 +218,7 @@ func cmdFetch(args []string) error {
 	if len(pos) > 1 {
 		cliRef = pos[1]
 	}
-	depth, err := parseDepthFlags(flags)
-	if err != nil {
-		return err
-	}
-	_, e, root, err := entry(name)
+	depth, e, root, err := fetchTarget(name, flags)
 	if err != nil {
 		return err
 	}
@@ -235,11 +246,7 @@ func cmdPath(args []string) error {
 	if len(pos) > 1 {
 		sub = pos[1]
 	}
-	depth, err := parseDepthFlags(flags)
-	if err != nil {
-		return err
-	}
-	_, e, root, err := entry(name)
+	depth, e, root, err := fetchTarget(name, flags)
 	if err != nil {
 		return err
 	}
@@ -360,7 +367,7 @@ func listAdhoc(root string) error {
 	slices.Sort(names)
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tURL\tREF\tCACHE\tAGE")
+	fmt.Fprintln(w, "NAME\tURL\tREF\tDEPTH\tCACHE\tAGE")
 	for _, name := range names {
 		dir := filepath.Join(root, name)
 		url, err := git.RemoteURL(dir)
@@ -368,22 +375,46 @@ func listAdhoc(root string) error {
 			url = ""
 		}
 		url = cmp.Or(url, "-")
-		ref := "(default)"
-		age := "-"
-		if mk, ok := fetch.ReadMarker(dir); ok {
-			ref = cmp.Or(mk.Ref, ref)
-			if mk.Fetched > 0 {
-				days := int(time.Since(time.Unix(mk.Fetched, 0)).Hours() / 24)
-				age = fmt.Sprintf("%dd", days)
-			}
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", name, url, ref, dir, age)
+		ref, depth, age := markerColumns(dir)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", name, url, ref, depth, dir, age)
 	}
 	if err := w.Flush(); err != nil {
 		return err
 	}
 	fmt.Printf("\ncache: %s\n", root)
 	return nil
+}
+
+// markerColumns renders the REF, DEPTH and AGE columns of the list tables from
+// a cached tree's marker. Trees without a marker report the defaults both
+// tables have always shown.
+func markerColumns(dir string) (ref, depth, age string) {
+	ref, depth, age = "(default)", "-", "-"
+	mk, ok := fetch.ReadMarker(dir)
+	if !ok {
+		return ref, depth, age
+	}
+	ref = cmp.Or(mk.Ref, ref)
+	depth = depthLabel(mk.Depth)
+	if mk.Fetched > 0 {
+		days := int(time.Since(time.Unix(mk.Fetched, 0)).Hours() / 24)
+		age = fmt.Sprintf("%dd", days)
+	}
+	return ref, depth, age
+}
+
+// depthLabel renders a marker depth for the list tables: "full" for complete
+// history, "-" when the marker predates depth tracking (or is invalid), and the
+// commit count otherwise.
+func depthLabel(d int) string {
+	switch {
+	case d == fetch.DepthFull:
+		return "full"
+	case d > 0:
+		return strconv.Itoa(d)
+	default:
+		return "-"
+	}
 }
 
 func cmdUpdate(args []string) error {
@@ -397,12 +428,8 @@ func cmdUpdate(args []string) error {
 	if len(pos) > 1 {
 		return fmt.Errorf("usage: update <name> [--deep | --depth N]")
 	}
-	depth, err := parseDepthFlags(flags)
-	if err != nil {
-		return err
-	}
 	name := pos[0]
-	_, e, root, err := entry(name)
+	depth, e, root, err := fetchTarget(name, flags)
 	if err != nil {
 		return err
 	}
@@ -419,39 +446,89 @@ func cmdRm(args []string) error {
 		return fmt.Errorf("missing source name")
 	}
 	target := args[0]
-	var dir string
-	if looksLikeURL(target) {
-		root, err := cache.AdhocRoot()
-		if err != nil {
-			return err
+
+	// A manifest name wins, so `rm <name>` keeps addressing the project cache.
+	m, manifestErr := loadManifest()
+	if manifestErr == nil {
+		if e, ok := m.Lookup(target); ok {
+			root, err := cache.Root(m.Path)
+			if err != nil {
+				return err
+			}
+			return removeCached(root, e.Name, target)
 		}
-		parsed, err := resolve.ParseWebURL(target, "")
-		if err != nil {
-			return err
-		}
-		dir = cache.Dir(root, cache.AdhocName(parsed.RepoURL))
-	} else {
-		_, _, root, err := entry(target)
-		if err != nil {
-			return err
-		}
-		dir = cache.Dir(root, target)
 	}
+
+	// No manifest entry matched. Only ad-hoc-looking targets (the spellings
+	// `peek` accepts) fall back to the ad-hoc cache; anything else keeps the
+	// manifest diagnosis so a typo still produces a clear error.
+	if !isAdhocTarget(target) {
+		if manifestErr != nil {
+			return manifestErr
+		}
+		return fmt.Errorf("unknown source %q", target)
+	}
+
+	root, err := cache.AdhocRoot()
+	if err != nil {
+		return err
+	}
+	parsed, err := resolve.ParseWebURL(target, "")
+	if err != nil {
+		return err
+	}
+	return removeCached(root, cache.AdhocName(parsed.RepoURL), target)
+}
+
+// removeCached deletes one cached tree, refusing when it does not exist.
+func removeCached(root, name, label string) error {
+	dir := cache.Dir(root, name)
 	if !fetch.HasGit(dir) {
-		return fmt.Errorf("%s is not cached", target)
+		return fmt.Errorf("%s is not cached", label)
 	}
 	if err := os.RemoveAll(dir); err != nil {
 		return err
 	}
-	progress("removed %s", target)
+	progress("removed %s", label)
 	return nil
 }
 
-// looksLikeURL decides whether rm's argument addresses an ad-hoc tree (a
-// remote-style URL) or a manifest name. Plain local paths are treated as
-// manifest names.
-func looksLikeURL(s string) bool {
-	return strings.Contains(s, "://") || strings.HasPrefix(s, "git@")
+// isAdhocTarget reports whether rm's argument can address an ad-hoc cache
+// entry, i.e. whether `peek` could have created one from the same spelling:
+// URLs, scp-like [user@]host:path URLs, and local paths (absolute, ./- or
+// ~/-prefixed, containing a separator, Windows drive paths, or existing on
+// disk). A bare name resolves only through the manifest.
+func isAdhocTarget(s string) bool {
+	if s == "" {
+		return false
+	}
+	if strings.Contains(s, "://") {
+		return true
+	}
+	if isWindowsDrivePath(s) || cache.IsSCPLike(s) {
+		return true
+	}
+	if filepath.IsAbs(s) || strings.HasPrefix(s, ".") || strings.HasPrefix(s, "~") {
+		return true
+	}
+	if strings.ContainsAny(s, `/\`) {
+		return true
+	}
+	_, err := os.Stat(s)
+	return err == nil
+}
+
+// isWindowsDrivePath reports whether s starts with a drive letter and colon
+// (C:, C:/x, C:\x), which is a local path rather than an scp-like URL.
+func isWindowsDrivePath(s string) bool {
+	if len(s) < 2 || s[1] != ':' {
+		return false
+	}
+	c := s[0]
+	if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {
+		return false
+	}
+	return len(s) == 2 || s[2] == '/' || s[2] == '\\'
 }
 
 func cmdClean(args []string) error {
@@ -742,21 +819,19 @@ func cmdList() error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tVERSION\tREF\tCACHE\tAGE")
+	fmt.Fprintln(w, "NAME\tVERSION\tREF\tDEPTH\tCACHE\tAGE")
 	for _, e := range m.Entries {
 		version := cmp.Or(resolve.InstalledVersion(e), "-")
 		ref := cmp.Or(resolve.Ref(e, ""), "(default)")
 		cacheCol := "(not cached)"
+		depth := "-"
 		age := "-"
 		dir := cache.Dir(root, e.Name)
 		if fetch.HasGit(dir) {
 			cacheCol = dir
-			if mk, ok := fetch.ReadMarker(dir); ok && mk.Fetched > 0 {
-				days := int(time.Since(time.Unix(mk.Fetched, 0)).Hours() / 24)
-				age = fmt.Sprintf("%dd", days)
-			}
+			_, depth, age = markerColumns(dir)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", e.Name, version, ref, cacheCol, age)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", e.Name, version, ref, depth, cacheCol, age)
 	}
 	if err := w.Flush(); err != nil {
 		return err
@@ -771,14 +846,14 @@ func usage(w *os.File) {
 usage: %[1]s [command] [args]
 
 commands:
-  (none) | list          list every manifest entry (version, ref, cache, age)
+  (none) | list          list every manifest entry (version, ref, depth, cache, age)
   path <name> [subpath] [--deep|--depth N]
                          ensure cached, print its directory (quiet stdout)
   <name> [ref] [--deep|--depth N]
                          ensure cached, print its directory (one-shot ref)
   peek <url|web-link> [ref] [--deep|--depth N]
                          one-off fetch of a git URL or deep link (ad-hoc cache)
-  peek                   list the ad-hoc cache
+  peek                   list the ad-hoc cache (url, ref, depth, age)
   update <name> [--deep|--depth N]
                          force a fresh clone at the resolved ref
   rm <name> | <url>      delete one cached tree (manifest entry or ad-hoc)

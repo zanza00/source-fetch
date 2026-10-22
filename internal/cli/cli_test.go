@@ -350,6 +350,113 @@ func TestPeekListEmpty(t *testing.T) {
 	}
 }
 
+// tableRow returns the whitespace-separated fields of the output line whose
+// first field is name.
+func tableRow(t *testing.T, out, name string) []string {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == name {
+			return fields
+		}
+	}
+	t.Fatalf("no row for %q in output:\n%s", name, out)
+	return nil
+}
+
+func TestDepthLabel(t *testing.T) {
+	tests := []struct {
+		depth int
+		want  string
+	}{
+		{fetch.DepthFull, "full"},
+		{0, "-"},
+		{1, "1"},
+		{20, "20"},
+	}
+	for _, tt := range tests {
+		if got := depthLabel(tt.depth); got != tt.want {
+			t.Errorf("depthLabel(%d) = %q, want %q", tt.depth, got, tt.want)
+		}
+	}
+}
+
+func TestListDepthColumn(t *testing.T) {
+	tests := []struct {
+		name string
+		// marker overrides the marker written by the fetch; empty keeps it.
+		marker string
+		want   string
+	}{
+		{name: "shallow", want: "1"},
+		{name: "full", marker: "ref=main\ncommit=deadbeef\nfetched=1700000000\ndepth=full\n", want: "full"},
+		{name: "explicit depth", marker: "ref=main\ncommit=deadbeef\nfetched=1700000000\ndepth=3\n", want: "3"},
+		{name: "legacy without depth", marker: "ref=main\ncommit=deadbeef\nfetched=1700000000\n", want: "-"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := makeHistoryRepo(t)
+			writeManifestEntry(t, "tool", repo.url)
+			t.Setenv(cache.EnvCache, t.TempDir())
+
+			code, out, stderr := runCLI(t, "path", "tool")
+			if code != 0 {
+				t.Fatalf("path exit code = %d: %s", code, stderr)
+			}
+			dir := strings.TrimSpace(out)
+			if tt.marker != "" {
+				if err := os.WriteFile(cache.Marker(dir), []byte(tt.marker), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			code, out, stderr = runCLI(t, "list")
+			if code != 0 {
+				t.Fatalf("list exit code = %d: %s", code, stderr)
+			}
+			if !strings.Contains(out, "DEPTH") {
+				t.Fatalf("list header has no DEPTH column:\n%s", out)
+			}
+			row := tableRow(t, out, "tool")
+			if len(row) != 6 {
+				t.Fatalf("row = %v, want name version ref depth cache age", row)
+			}
+			if row[3] != tt.want {
+				t.Fatalf("DEPTH = %q, want %q (row %v)", row[3], tt.want, row)
+			}
+		})
+	}
+}
+
+func TestPeekListShowsDepth(t *testing.T) {
+	repo := makeHistoryRepo(t)
+	t.Setenv(cache.EnvCache, t.TempDir())
+
+	code, out, stderr := runCLI(t, "peek", repo.url, "--depth", "3")
+	if code != 0 {
+		t.Fatalf("peek --depth 3 exit code = %d: %s", code, stderr)
+	}
+	name := filepath.Base(strings.TrimSpace(out))
+
+	code, out, stderr = runCLI(t, "peek")
+	if code != 0 {
+		t.Fatalf("peek list exit code = %d: %s", code, stderr)
+	}
+	if !strings.Contains(out, "DEPTH") {
+		t.Fatalf("peek list header has no DEPTH column:\n%s", out)
+	}
+	row := tableRow(t, out, name)
+	if len(row) != 6 {
+		t.Fatalf("row = %v, want name url ref depth cache age", row)
+	}
+	if row[1] != repo.url {
+		t.Fatalf("URL = %q, want %q", row[1], repo.url)
+	}
+	if row[3] != "3" {
+		t.Fatalf("DEPTH = %q, want 3 (row %v)", row[3], row)
+	}
+}
+
 func TestManifestAddSetRm(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, manifest.CanonicalName)
@@ -507,6 +614,64 @@ func TestPeekDeepLink(t *testing.T) {
 	}
 }
 
+// TestPeekReleaseTagWithSlash proves a `/releases/tag/release/1.0` link keeps
+// the whole slash-containing tag instead of falling back to the default branch.
+func TestPeekReleaseTagWithSlash(t *testing.T) {
+	repo := makeHistoryRepo(t)
+	const tag = "release/1.0"
+	gitT(t, repo.bare, "tag", tag, repo.tagSHA)
+
+	base := "https://github.com/acme/tool"
+	useInsteadOf(t, repo.bare, base)
+	t.Setenv(cache.EnvCache, t.TempDir())
+
+	code, out, stderr := runCLI(t, "peek", base+"/releases/tag/"+tag)
+	if code != 0 {
+		t.Fatalf("peek exit code = %d: %s", code, stderr)
+	}
+	dir := strings.TrimSpace(out)
+	if !fetch.HasGit(dir) {
+		t.Fatalf("peek printed %q, want a checkout", dir)
+	}
+	if got := gitOut(t, dir, "rev-parse", "HEAD"); got != repo.tagSHA {
+		t.Fatalf("HEAD = %s, want tag SHA %s", got, repo.tagSHA)
+	}
+	if m, ok := fetch.ReadMarker(dir); !ok || m.Ref != tag {
+		t.Fatalf("marker = %+v ok=%v, want ref=%s", m, ok, tag)
+	}
+}
+
+// TestCommandArityRejectsExtraPositionals documents the intentional stricter
+// arity: extra positionals are rejected with a usage error before any fetch.
+func TestCommandArityRejectsExtraPositionals(t *testing.T) {
+	writeManifestEntry(t, "tool", "https://example.com/tool.git")
+	t.Setenv(cache.EnvCache, t.TempDir())
+
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"path extra positional", []string{"path", "tool", "file", "extra"}, "usage: path"},
+		{"default fetch extra positional", []string{"tool", "ref", "extra"}, "usage: <name>"},
+		{"update extra positional", []string{"update", "tool", "extra"}, "usage: update"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, out, stderr := runCLI(t, tt.args...)
+			if code != 1 {
+				t.Fatalf("exit code = %d, want 1", code)
+			}
+			if strings.TrimSpace(out) != "" {
+				t.Fatalf("stdout = %q, want nothing", out)
+			}
+			if !strings.Contains(stderr, tt.want) {
+				t.Fatalf("stderr = %q, want %q", stderr, tt.want)
+			}
+		})
+	}
+}
+
 func TestRmCanonicalizesDeepLink(t *testing.T) {
 	bare := makeBareRepo(t)
 	base := "https://github.com/acme/tool"
@@ -529,6 +694,163 @@ func TestRmCanonicalizesDeepLink(t *testing.T) {
 	if fetch.HasGit(dir) {
 		t.Fatalf("rm of a deep link did not remove %s", dir)
 	}
+}
+
+func TestIsAdhocTarget(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	if err := os.Mkdir("existing", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"http url", "https://github.com/o/r", true},
+		{"file url", "file:///tmp/repo", true},
+		{"scp git user", "git@github.com:o/r", true},
+		{"scp other user", "deploy@example.com:o/r", true},
+		{"scp without user", "example.com:o/r", true},
+		{"absolute path", filepath.Join(root, "repo"), true},
+		{"dot relative", "." + string(filepath.Separator) + "repo", true},
+		{"tilde path", "~/repo", true},
+		{"slash path", "repo/sub", true},
+		{"backslash path", `repo\sub`, true},
+		{"windows drive", `C:\repo`, true},
+		{"existing bare name", "existing", true},
+		{"unknown bare name", "ghost", false},
+		{"empty", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isAdhocTarget(tt.in); got != tt.want {
+				t.Errorf("isAdhocTarget(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRmPeekedLocalPath covers the peek/rm symmetry for local repositories:
+// both commands must derive the same ad-hoc cache entry from the same spelling.
+func TestRmPeekedLocalPath(t *testing.T) {
+	bare := makeBareRepo(t)
+	t.Setenv(cache.EnvCache, t.TempDir())
+
+	peekAndRm := func(t *testing.T, peekArg, rmArg string) {
+		t.Helper()
+		code, out, stderr := runCLI(t, "peek", peekArg)
+		if code != 0 {
+			t.Fatalf("peek %q exit code = %d: %s", peekArg, code, stderr)
+		}
+		dir := strings.TrimSpace(out)
+		if !fetch.HasGit(dir) {
+			t.Fatalf("peek %q printed %q, want a checkout", peekArg, dir)
+		}
+
+		code, _, stderr = runCLI(t, "rm", rmArg)
+		if code != 0 {
+			t.Fatalf("rm %q exit code = %d: %s", rmArg, code, stderr)
+		}
+		if fetch.HasGit(dir) {
+			t.Fatalf("rm %q did not remove %s", rmArg, dir)
+		}
+	}
+
+	t.Run("absolute", func(t *testing.T) {
+		peekAndRm(t, bare, bare)
+	})
+
+	t.Run("relative same spelling", func(t *testing.T) {
+		t.Chdir(filepath.Dir(bare))
+		rel := filepath.Base(bare)
+		peekAndRm(t, rel, rel)
+	})
+
+	t.Run("relative cleaned spelling", func(t *testing.T) {
+		t.Chdir(filepath.Dir(bare))
+		rel := filepath.Base(bare)
+		peekAndRm(t, "."+string(filepath.Separator)+rel, rel)
+	})
+}
+
+func TestRmPeekedSCPLikeURL(t *testing.T) {
+	bare := makeBareRepo(t)
+	const repoURL = "deploy@example.com:o/r"
+	useInsteadOf(t, bare, repoURL)
+	t.Setenv(cache.EnvCache, t.TempDir())
+
+	code, out, stderr := runCLI(t, "peek", repoURL)
+	if code != 0 {
+		t.Fatalf("peek exit code = %d: %s", code, stderr)
+	}
+	dir := strings.TrimSpace(out)
+	if !fetch.HasGit(dir) {
+		t.Fatalf("peek printed %q, want a checkout", dir)
+	}
+
+	code, _, stderr = runCLI(t, "rm", repoURL)
+	if code != 0 {
+		t.Fatalf("rm exit code = %d: %s", code, stderr)
+	}
+	if fetch.HasGit(dir) {
+		t.Fatalf("rm of an scp-like URL did not remove %s", dir)
+	}
+}
+
+func TestRmManifestEntryStillWorks(t *testing.T) {
+	bare := makeBareRepo(t)
+	writeManifestEntry(t, "tool", bare)
+	t.Setenv(cache.EnvCache, t.TempDir())
+
+	code, out, stderr := runCLI(t, "path", "tool")
+	if code != 0 {
+		t.Fatalf("path exit code = %d: %s", code, stderr)
+	}
+	dir := strings.TrimSpace(out)
+	if !fetch.HasGit(dir) {
+		t.Fatalf("path printed %q, want a checkout", dir)
+	}
+
+	code, _, stderr = runCLI(t, "rm", "tool")
+	if code != 0 {
+		t.Fatalf("rm exit code = %d: %s", code, stderr)
+	}
+	if fetch.HasGit(dir) {
+		t.Fatalf("rm of a manifest entry did not remove %s", dir)
+	}
+}
+
+func TestRmUnknownBareNameFails(t *testing.T) {
+	t.Setenv(cache.EnvCache, t.TempDir())
+
+	t.Run("no manifest", func(t *testing.T) {
+		t.Setenv(manifest.EnvManifest, filepath.Join(t.TempDir(), "missing.toml"))
+		code, out, stderr := runCLI(t, "rm", "ghost")
+		if code != 1 {
+			t.Fatalf("exit code = %d, want 1", code)
+		}
+		if strings.TrimSpace(out) != "" {
+			t.Fatalf("stdout = %q, want nothing", out)
+		}
+		if !strings.Contains(stderr, "manifest not found") {
+			t.Fatalf("stderr = %q, want the manifest error", stderr)
+		}
+	})
+
+	t.Run("manifest without the entry", func(t *testing.T) {
+		writeManifestEntry(t, "tool", "https://example.com/tool.git")
+		code, out, stderr := runCLI(t, "rm", "ghost")
+		if code != 1 {
+			t.Fatalf("exit code = %d, want 1", code)
+		}
+		if strings.TrimSpace(out) != "" {
+			t.Fatalf("stdout = %q, want nothing", out)
+		}
+		if !strings.Contains(stderr, "unknown source") {
+			t.Fatalf("stderr = %q, want an unknown-source error", stderr)
+		}
+	})
 }
 
 func TestPeekDeepLinkMissingPath(t *testing.T) {

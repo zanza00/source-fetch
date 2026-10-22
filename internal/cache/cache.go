@@ -1,5 +1,5 @@
-// Package cache computes the on-disk cache layout and guards destructive
-// operations (§6).
+// Package cache computes the on-disk cache layout, canonicalises ad-hoc URLs
+// (AdhocKey/AdhocName) and guards destructive operations (§6).
 package cache
 
 import (
@@ -201,6 +201,15 @@ func splitSCP(s string) (user, host, p string, ok bool) {
 	return user, host, p, true
 }
 
+// IsSCPLike reports whether s is an scp-like git URL of the form
+// [user@]host:path, the spelling AdhocKey treats as its own transport. Local
+// paths and Windows drive paths are not scp-like. Commands use it to decide
+// whether an argument can address an ad-hoc cache entry.
+func IsSCPLike(s string) bool {
+	_, _, p, ok := splitSCP(s)
+	return ok && p != ""
+}
+
 func isWindowsPath(s string) bool {
 	return len(s) >= 2 && s[1] == ':' && isASCIIAlpha(s[0]) &&
 		(len(s) == 2 || s[2] == '/' || s[2] == '\\')
@@ -210,7 +219,7 @@ func isASCIIAlpha(c byte) bool {
 	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }
 
-// fallbackKey is the textual cleanup used when url.Parse fails. AdhocName
+// fallbackKey is the textual cleanup used when url.Parse fails. AdhocKey
 // cannot return an error, so it must stay stable and never panic.
 func fallbackKey(s string) string {
 	if i := strings.IndexAny(s, "?#"); i >= 0 {

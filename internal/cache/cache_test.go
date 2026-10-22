@@ -69,6 +69,29 @@ func TestAdhocRootHonoursEnvOverride(t *testing.T) {
 	}
 }
 
+func TestIsSCPLike(t *testing.T) {
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{"deploy@example.com:o/r", true},
+		{"git@github.com:o/r", true},
+		{"example.com:o/r", true},
+		{"https://example.com/o/r", false},
+		{"ssh://git@example.com/o/r", false},
+		{"file:///tmp/repo", false},
+		{`C:\repo`, false},
+		{"C:/repo", false},
+		{"/tmp/repo", false},
+		{"repo", false},
+	}
+	for _, tt := range tests {
+		if got := IsSCPLike(tt.in); got != tt.want {
+			t.Errorf("IsSCPLike(%q) = %v, want %v", tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestAdhocKeyCanonicalHTTP(t *testing.T) {
 	want := AdhocKey("https://github.com/o/r")
 	for _, raw := range []string{
