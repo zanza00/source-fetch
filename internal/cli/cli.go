@@ -162,18 +162,18 @@ var fetchFlags = map[string]bool{
 
 // parseDepthFlags turns --deep/--depth into a fetch depth. Zero flags mean the
 // default shallow clone; the two flags are mutually exclusive.
-func parseDepthFlags(flags map[string]string) (int, error) {
+func parseDepthFlags(flags map[string]string) (fetch.Depth, error) {
 	_, deepSet := flags["deep"]
 	_, depthSet := flags["depth"]
 	if deepSet && depthSet {
-		return 0, fmt.Errorf("cannot use --deep and --depth together")
+		return fetch.DepthUnknown, fmt.Errorf("cannot use --deep and --depth together")
 	}
 	if depthSet {
 		n, err := strconv.Atoi(flags["depth"])
 		if err != nil || n < 1 {
-			return 0, fmt.Errorf("--depth must be a positive integer, got %q", flags["depth"])
+			return fetch.DepthUnknown, fmt.Errorf("--depth must be a positive integer, got %q", flags["depth"])
 		}
-		return n, nil
+		return fetch.Depth(n), nil
 	}
 	if deepSet {
 		switch flags["deep"] {
@@ -182,7 +182,7 @@ func parseDepthFlags(flags map[string]string) (int, error) {
 		case "false":
 			return fetch.DepthDefault, nil
 		default:
-			return 0, fmt.Errorf("--deep must be true or false, got %q", flags["deep"])
+			return fetch.DepthUnknown, fmt.Errorf("--deep must be true or false, got %q", flags["deep"])
 		}
 	}
 	return fetch.DepthDefault, nil
@@ -190,39 +190,59 @@ func parseDepthFlags(flags map[string]string) (int, error) {
 
 // fetchTarget parses the history flags and resolves name through the manifest.
 // It is the shared prologue of the commands that fetch a named entry.
-func fetchTarget(name string, flags map[string]string) (int, *manifest.Entry, string, error) {
+func fetchTarget(name string, flags map[string]string) (fetch.Depth, *manifest.Entry, string, error) {
 	depth, err := parseDepthFlags(flags)
 	if err != nil {
-		return 0, nil, "", err
+		return fetch.DepthUnknown, nil, "", err
 	}
 	_, e, root, err := entry(name)
 	if err != nil {
-		return 0, nil, "", err
+		return fetch.DepthUnknown, nil, "", err
 	}
 	return depth, e, root, nil
 }
 
-func cmdFetch(args []string) error {
+// namedTarget is the parsed prologue shared by the commands that accept
+// `<name> [arg]`: the default fetch (arg is a ref) and `path` (arg is a
+// subpath).
+type namedTarget struct {
+	arg   string
+	depth fetch.Depth
+	entry *manifest.Entry
+	root  string
+}
+
+// parseNamedTarget parses flags and the optional second positional for a
+// command that operates on one manifest entry. usage is the command's synopsis
+// without the leading "usage: ".
+func parseNamedTarget(args []string, usage string) (namedTarget, error) {
 	pos, flags, err := parseFlags(args, fetchFlags)
 	if err != nil {
-		return err
+		return namedTarget{}, err
 	}
 	if len(pos) == 0 {
-		return fmt.Errorf("missing source name")
+		return namedTarget{}, fmt.Errorf("missing source name")
 	}
 	if len(pos) > 2 {
-		return fmt.Errorf("usage: <name> [ref] [--deep | --depth N]")
+		return namedTarget{}, fmt.Errorf("usage: %s", usage)
 	}
-	name := pos[0]
-	cliRef := ""
+	depth, e, root, err := fetchTarget(pos[0], flags)
+	if err != nil {
+		return namedTarget{}, err
+	}
+	t := namedTarget{depth: depth, entry: e, root: root}
 	if len(pos) > 1 {
-		cliRef = pos[1]
+		t.arg = pos[1]
 	}
-	depth, e, root, err := fetchTarget(name, flags)
+	return t, nil
+}
+
+func cmdFetch(args []string) error {
+	t, err := parseNamedTarget(args, "<name> [ref] [--deep | --depth N]")
 	if err != nil {
 		return err
 	}
-	dir, err := fetch.Ensure(root, e, resolve.Ref(e, cliRef), fetch.EnsureOpts{Depth: depth, Progress: progress})
+	dir, err := fetch.Ensure(t.root, t.entry, resolve.Ref(t.entry, t.arg), fetch.EnsureOpts{Depth: t.depth, Progress: progress})
 	if err != nil {
 		return err
 	}
@@ -231,31 +251,16 @@ func cmdFetch(args []string) error {
 }
 
 func cmdPath(args []string) error {
-	pos, flags, err := parseFlags(args, fetchFlags)
+	t, err := parseNamedTarget(args, "path <name> [subpath] [--deep | --depth N]")
 	if err != nil {
 		return err
 	}
-	if len(pos) == 0 {
-		return fmt.Errorf("missing source name")
-	}
-	if len(pos) > 2 {
-		return fmt.Errorf("usage: path <name> [subpath] [--deep | --depth N]")
-	}
-	name := pos[0]
-	sub := ""
-	if len(pos) > 1 {
-		sub = pos[1]
-	}
-	depth, e, root, err := fetchTarget(name, flags)
+	dir, err := fetch.Ensure(t.root, t.entry, resolve.Ref(t.entry, ""), fetch.EnsureOpts{Depth: t.depth, Progress: progress})
 	if err != nil {
 		return err
 	}
-	dir, err := fetch.Ensure(root, e, resolve.Ref(e, ""), fetch.EnsureOpts{Depth: depth, Progress: progress})
-	if err != nil {
-		return err
-	}
-	if sub != "" {
-		dir, err = subpathPath(dir, sub)
+	if t.arg != "" {
+		dir, err = subpathPath(dir, t.arg)
 		if err != nil {
 			return err
 		}
@@ -406,15 +411,11 @@ func markerColumns(dir string) (ref, depth, age string) {
 // depthLabel renders a marker depth for the list tables: "full" for complete
 // history, "-" when the marker predates depth tracking (or is invalid), and the
 // commit count otherwise.
-func depthLabel(d int) string {
-	switch {
-	case d == fetch.DepthFull:
-		return "full"
-	case d > 0:
-		return strconv.Itoa(d)
-	default:
+func depthLabel(d fetch.Depth) string {
+	if d == fetch.DepthUnknown {
 		return "-"
 	}
+	return d.String()
 }
 
 func cmdUpdate(args []string) error {
@@ -444,6 +445,9 @@ func cmdUpdate(args []string) error {
 func cmdRm(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("missing source name")
+	}
+	if len(args) > 1 {
+		return fmt.Errorf("usage: rm <name> | <url>")
 	}
 	target := args[0]
 
@@ -505,7 +509,7 @@ func isAdhocTarget(s string) bool {
 	if strings.Contains(s, "://") {
 		return true
 	}
-	if isWindowsDrivePath(s) || cache.IsSCPLike(s) {
+	if cache.IsWindowsPath(s) || cache.IsSCPLike(s) {
 		return true
 	}
 	if filepath.IsAbs(s) || strings.HasPrefix(s, ".") || strings.HasPrefix(s, "~") {
@@ -516,19 +520,6 @@ func isAdhocTarget(s string) bool {
 	}
 	_, err := os.Stat(s)
 	return err == nil
-}
-
-// isWindowsDrivePath reports whether s starts with a drive letter and colon
-// (C:, C:/x, C:\x), which is a local path rather than an scp-like URL.
-func isWindowsDrivePath(s string) bool {
-	if len(s) < 2 || s[1] != ':' {
-		return false
-	}
-	c := s[0]
-	if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {
-		return false
-	}
-	return len(s) == 2 || s[2] == '/' || s[2] == '\\'
 }
 
 func cmdClean(args []string) error {

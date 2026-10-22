@@ -3,6 +3,7 @@ package cache
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -89,6 +90,46 @@ func TestIsSCPLike(t *testing.T) {
 		if got := IsSCPLike(tt.in); got != tt.want {
 			t.Errorf("IsSCPLike(%q) = %v, want %v", tt.in, got, tt.want)
 		}
+	}
+}
+
+func TestIsWindowsPathOS(t *testing.T) {
+	tests := []struct {
+		in      string
+		windows bool
+		want    bool
+	}{
+		{"C:", true, true},
+		{"C:", false, true},
+		{`C:\repo`, true, true},
+		{`C:\repo`, false, true},
+		{"C:/repo", true, true},
+		{"C:/repo", false, true},
+		{"C:repo", true, true},
+		{"C:repo", false, false},
+		{"1:repo", true, false},
+		{"", true, false},
+		{"ab", true, false},
+		{"git@example.com:repo", true, false},
+	}
+	for _, tt := range tests {
+		if got := isWindowsPathOS(tt.in, tt.windows); got != tt.want {
+			t.Errorf("isWindowsPathOS(%q, windows=%v) = %v, want %v", tt.in, tt.windows, got, tt.want)
+		}
+	}
+}
+
+// TestAdhocKeyDriveRelative pins the platform split for C:relative: a local
+// path on Windows, an scp-like URL (host "c") elsewhere.
+func TestAdhocKeyDriveRelative(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		if got, want := AdhocKey("C:repo"), filepath.Clean("C:repo"); got != want {
+			t.Errorf("AdhocKey(C:repo) = %q, want %q", got, want)
+		}
+		return
+	}
+	if got, want := AdhocKey("C:repo"), "scp://c:repo"; got != want {
+		t.Errorf("AdhocKey(C:repo) = %q, want %q", got, want)
 	}
 }
 

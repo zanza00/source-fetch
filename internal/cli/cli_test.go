@@ -366,17 +366,17 @@ func tableRow(t *testing.T, out, name string) []string {
 
 func TestDepthLabel(t *testing.T) {
 	tests := []struct {
-		depth int
+		depth fetch.Depth
 		want  string
 	}{
 		{fetch.DepthFull, "full"},
-		{0, "-"},
-		{1, "1"},
+		{fetch.DepthUnknown, "-"},
+		{fetch.DepthDefault, "1"},
 		{20, "20"},
 	}
 	for _, tt := range tests {
 		if got := depthLabel(tt.depth); got != tt.want {
-			t.Errorf("depthLabel(%d) = %q, want %q", tt.depth, got, tt.want)
+			t.Errorf("depthLabel(%v) = %q, want %q", tt.depth, got, tt.want)
 		}
 	}
 }
@@ -655,6 +655,7 @@ func TestCommandArityRejectsExtraPositionals(t *testing.T) {
 		{"path extra positional", []string{"path", "tool", "file", "extra"}, "usage: path"},
 		{"default fetch extra positional", []string{"tool", "ref", "extra"}, "usage: <name>"},
 		{"update extra positional", []string{"update", "tool", "extra"}, "usage: update"},
+		{"rm extra positional", []string{"rm", "tool", "extra"}, "usage: rm"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -718,6 +719,7 @@ func TestIsAdhocTarget(t *testing.T) {
 		{"slash path", "repo/sub", true},
 		{"backslash path", `repo\sub`, true},
 		{"windows drive", `C:\repo`, true},
+		{"windows drive relative", "C:repo", true},
 		{"existing bare name", "existing", true},
 		{"unknown bare name", "ghost", false},
 		{"empty", "", false},

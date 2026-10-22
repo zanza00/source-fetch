@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/zanza00/source-fetch/internal/git"
@@ -93,7 +94,7 @@ func AdhocKey(raw string) string {
 		}
 		return "scp://" + strings.ToLower(host) + ":" + p
 	}
-	if isWindowsPath(s) {
+	if IsWindowsPath(s) {
 		return filepath.Clean(s)
 	}
 
@@ -192,10 +193,10 @@ func splitSCP(s string) (user, host, p string, ok bool) {
 	if host == "" || strings.ContainsAny(host, `/\`) {
 		return "", "", "", false
 	}
-	// A bare single-letter host followed by an absolute path is a Windows
-	// drive (C:/x, C:\x), not an scp URL.
-	if at < 0 && len(host) == 1 && isASCIIAlpha(host[0]) &&
-		(strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`)) {
+	// A bare single-letter host is a Windows drive (C:/x, C:\x, C:relative),
+	// not an scp URL. Drive-relative paths are local only on Windows; on Unix
+	// the same spelling is a valid scp-like URL.
+	if at < 0 && IsWindowsPath(rest) {
 		return "", "", "", false
 	}
 	return user, host, p, true
@@ -210,9 +211,22 @@ func IsSCPLike(s string) bool {
 	return ok && p != ""
 }
 
-func isWindowsPath(s string) bool {
-	return len(s) >= 2 && s[1] == ':' && isASCIIAlpha(s[0]) &&
-		(len(s) == 2 || s[2] == '/' || s[2] == '\\')
+// IsWindowsPath reports whether s is a Windows drive path: C:, C:/x, C:\x, or
+// the drive-relative C:relative. Drive-relative paths are local only on
+// Windows; elsewhere the same spelling is a valid scp-like URL, so the
+// classification is platform-dependent.
+func IsWindowsPath(s string) bool {
+	return isWindowsPathOS(s, runtime.GOOS == "windows")
+}
+
+func isWindowsPathOS(s string, windows bool) bool {
+	if len(s) < 2 || s[1] != ':' || !isASCIIAlpha(s[0]) {
+		return false
+	}
+	if len(s) == 2 || s[2] == '/' || s[2] == '\\' {
+		return true
+	}
+	return windows
 }
 
 func isASCIIAlpha(c byte) bool {

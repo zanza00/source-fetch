@@ -15,12 +15,45 @@ import (
 	"github.com/zanza00/source-fetch/internal/manifest"
 )
 
+// Depth is an amount of history: a positive commit count or DepthFull.
+type Depth int
+
 const (
-	// DepthDefault is the shallow depth used when no flag is given.
-	DepthDefault = 1
 	// DepthFull requests complete history (`--deep`).
-	DepthFull = -1
+	DepthFull Depth = -1
+	// DepthUnknown is the zero value. As a request it means DepthDefault; in
+	// a marker it means the depth was not recorded (old marker or invalid
+	// value).
+	DepthUnknown Depth = 0
+	// DepthDefault is the shallow depth used when no flag is given.
+	DepthDefault Depth = 1
 )
+
+// normalized maps a request's zero value to DepthDefault.
+func (d Depth) normalized() Depth {
+	if d == DepthUnknown {
+		return DepthDefault
+	}
+	return d
+}
+
+// valid reports whether d is a requestable depth.
+func (d Depth) valid() bool {
+	return d == DepthFull || d >= 1
+}
+
+// String renders a depth for messages and tables: "full", a commit count, or
+// "unknown" for the zero value.
+func (d Depth) String() string {
+	switch d {
+	case DepthFull:
+		return "full"
+	case DepthUnknown:
+		return "unknown"
+	default:
+		return strconv.Itoa(int(d))
+	}
+}
 
 // Marker records what a cached tree holds.
 type Marker struct {
@@ -28,9 +61,9 @@ type Marker struct {
 	Commit  string
 	Fetched int64
 	// Depth is the recorded history depth: DepthFull for a complete clone,
-	// a positive number for a shallow one, and 0 when the marker predates
-	// depth tracking or carries an invalid value.
-	Depth int
+	// a positive number for a shallow one, and DepthUnknown when the marker
+	// predates depth tracking or carries an invalid value.
+	Depth Depth
 }
 
 // Progress receives human-readable progress messages (always stderr-bound).
@@ -40,7 +73,7 @@ type Progress func(format string, args ...any)
 // deep without forcing.
 type EnsureOpts struct {
 	Force    bool
-	Depth    int // 0 = DepthDefault; DepthFull or >= 1
+	Depth    Depth // DepthUnknown means DepthDefault; DepthFull or >= 1
 	Progress Progress
 }
 
@@ -57,11 +90,8 @@ func Ensure(root string, e *manifest.Entry, ref string, opts EnsureOpts) (string
 	if err := git.ValidateRef(ref); err != nil {
 		return "", fmt.Errorf("source %q: %w", e.Name, err)
 	}
-	depth := opts.Depth
-	if depth == 0 {
-		depth = DepthDefault
-	}
-	if depth < DepthFull {
+	depth := opts.Depth.normalized()
+	if !depth.valid() {
 		return "", fmt.Errorf("source %q: invalid depth %d (want %d, or >= 1)", e.Name, depth, DepthFull)
 	}
 	progress := opts.Progress
@@ -85,28 +115,18 @@ func Ensure(root string, e *manifest.Entry, ref string, opts EnsureOpts) (string
 
 	if _, err := os.Stat(dir); err == nil {
 		progress("refreshing %s", e.Name)
-		if err := os.RemoveAll(dir); err != nil {
-			return "", err
-		}
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
 	}
 
 	if ref == "" {
-		if _, err := git.Run("", cloneArgs(e.URL, dir, "", depth)...); err != nil {
+		if err := cloneInto(dir, e.URL, "", depth); err != nil {
 			_ = os.RemoveAll(dir)
 			return "", err
 		}
 	} else {
-		if _, err := git.Run("", cloneArgs(e.URL, dir, ref, depth)...); err != nil {
+		if err := cloneInto(dir, e.URL, ref, depth); err != nil {
 			if err := fetchCommit(dir, e.URL, ref, depth, progress); err != nil {
-				_ = os.RemoveAll(dir)
-				if err := os.MkdirAll(dir, 0o755); err != nil {
-					return "", err
-				}
 				progress("ref '%s' not found, using default branch", ref)
-				if _, err := git.Run("", cloneArgs(e.URL, dir, "", depth)...); err != nil {
+				if err := cloneInto(dir, e.URL, "", depth); err != nil {
 					_ = os.RemoveAll(dir)
 					return "", err
 				}
@@ -120,8 +140,27 @@ func Ensure(root string, e *manifest.Entry, ref string, opts EnsureOpts) (string
 	return dir, nil
 }
 
+// cloneInto replaces dir with a fresh clone at ref (empty ref means the remote
+// default branch) and the requested depth. Callers clean up after a failure.
+func cloneInto(dir, url, ref string, depth Depth) error {
+	if err := resetDir(dir); err != nil {
+		return err
+	}
+	_, err := git.Run("", cloneArgs(url, dir, ref, depth)...)
+	return err
+}
+
+// resetDir removes dir and recreates it empty, the shared starting point for
+// clone and fetch-commit checkouts.
+func resetDir(dir string) error {
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	return os.MkdirAll(dir, 0o755)
+}
+
 // cloneArgs builds `git clone` arguments, omitting --depth for full history.
-func cloneArgs(url, dir, ref string, depth int) []string {
+func cloneArgs(url, dir, ref string, depth Depth) []string {
 	args := []string{"clone", "-q"}
 	args = append(args, depthArgs(depth)...)
 	if ref != "" {
@@ -131,19 +170,16 @@ func cloneArgs(url, dir, ref string, depth int) []string {
 }
 
 // depthArgs returns the shallow-clone arguments for depth, or nil for full.
-func depthArgs(depth int) []string {
+func depthArgs(depth Depth) []string {
 	if depth == DepthFull {
 		return nil
 	}
-	return []string{"--depth", strconv.Itoa(depth)}
+	return []string{"--depth", strconv.Itoa(int(depth))}
 }
 
 // fetchCommit treats ref as a commit SHA: fresh init, fetch the SHA, detach.
-func fetchCommit(dir, url, ref string, depth int, progress Progress) error {
-	if err := os.RemoveAll(dir); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+func fetchCommit(dir, url, ref string, depth Depth, progress Progress) error {
+	if err := resetDir(dir); err != nil {
 		return err
 	}
 	if _, err := git.Run(dir, "init", "-q"); err != nil {
@@ -177,7 +213,7 @@ func IsShallow(dir string) bool {
 //
 // A complete cache satisfies every request: history is never reduced. The
 // marker is deliberately ignored; the real git state is authoritative.
-func depthSatisfied(dir string, want int) bool {
+func depthSatisfied(dir string, want Depth) bool {
 	if want == DepthFull {
 		return !IsShallow(dir)
 	}
@@ -188,7 +224,7 @@ func depthSatisfied(dir string, want int) bool {
 		return true
 	}
 	n, err := commitCount(dir)
-	return err == nil && n >= want
+	return err == nil && Depth(n) >= want
 }
 
 // commitCount returns the number of commits reachable from HEAD.
@@ -206,13 +242,13 @@ func commitCount(dir string) (int, error) {
 
 // deepen grows the history of an existing checkout in place. It never removes
 // dir: on failure the caller keeps the previous checkout.
-func deepen(dir string, want int, progress Progress) error {
+func deepen(dir string, want Depth, progress Progress) error {
 	target := deepenTarget(dir)
 	args := []string{"fetch", "-q"}
 	if want == DepthFull {
 		args = append(args, "--unshallow")
 	} else {
-		args = append(args, "--depth", strconv.Itoa(want))
+		args = append(args, "--depth", strconv.Itoa(int(want)))
 	}
 	args = append(args, "origin", target)
 	if want == DepthFull {
@@ -224,29 +260,27 @@ func deepen(dir string, want int, progress Progress) error {
 		return err
 	}
 	if !depthSatisfied(dir, want) {
-		return fmt.Errorf("history is still shallower than requested (want %s)", depthName(want))
+		return fmt.Errorf("history is still shallower than requested (want %s)", want)
 	}
 	return nil
 }
 
-// deepenTarget derives the refspec from the current checkout: an attached
-// branch name, else its HEAD commit, else HEAD. The requested ref may be empty
-// (default branch) or may not match the cached commit, so it is not used.
+// deepenTarget derives the fetch target from the current checkout: an attached
+// branch name, else an exact tag name, else its HEAD commit. Fetching a tag by
+// name works on servers that refuse fetch-by-SHA; the SHA remains the fallback
+// for detached commits without a tag. The requested ref may be empty (default
+// branch) or may not match the cached commit, so it is not used.
 func deepenTarget(dir string) string {
 	if branch, err := git.Run(dir, "symbolic-ref", "--short", "-q", "HEAD"); err == nil && branch != "" {
 		return branch
+	}
+	if tag, err := git.Run(dir, "describe", "--tags", "--exact-match", "HEAD"); err == nil && tag != "" {
+		return "refs/tags/" + tag
 	}
 	if sha, err := git.HeadCommit(dir); err == nil && sha != "" {
 		return sha
 	}
 	return "HEAD"
-}
-
-func depthName(depth int) string {
-	if depth == DepthFull {
-		return "full"
-	}
-	return strconv.Itoa(depth)
 }
 
 // HasGit reports whether dir is a git checkout.
@@ -282,7 +316,7 @@ func AtRef(dir, ref string) bool {
 
 // WriteMarker records the requested ref, the resolved HEAD, the fetch time and
 // the actual history depth.
-func WriteMarker(dir, ref string, depth int) error {
+func WriteMarker(dir, ref string, depth Depth) error {
 	if err := git.ValidateRef(ref); err != nil {
 		return fmt.Errorf("cannot record marker: %w", err)
 	}
@@ -290,11 +324,12 @@ func WriteMarker(dir, ref string, depth int) error {
 	if err != nil {
 		return err
 	}
-	if depth == 0 {
-		depth = DepthDefault
+	depth = depth.normalized()
+	if !depth.valid() {
+		return fmt.Errorf("cannot record marker: invalid depth %d", depth)
 	}
 	m := Marker{Ref: ref, Commit: commit, Fetched: time.Now().Unix(), Depth: depth}
-	recorded := depthName(m.Depth)
+	recorded := m.Depth.String()
 	if !IsShallow(dir) {
 		recorded = "full"
 		m.Depth = DepthFull
@@ -334,7 +369,7 @@ func ReadMarker(dir string) (Marker, bool) {
 				m.Depth = DepthFull
 			default:
 				if n, err := strconv.Atoi(v); err == nil && n >= 1 {
-					m.Depth = n
+					m.Depth = Depth(n)
 				}
 			}
 		}

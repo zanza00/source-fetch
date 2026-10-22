@@ -121,7 +121,7 @@ func makeHistoryRepo(t *testing.T) historyRepo {
 	}
 }
 
-func ensureAt(t *testing.T, root string, e *manifest.Entry, ref string, depth int) string {
+func ensureAt(t *testing.T, root string, e *manifest.Entry, ref string, depth Depth) string {
 	t.Helper()
 	dir, err := Ensure(root, e, ref, EnsureOpts{Depth: depth, Progress: noop})
 	if err != nil {
@@ -319,7 +319,7 @@ func TestWriteMarkerRejectsInvalidRef(t *testing.T) {
 
 func TestEnsureRejectsInvalidDepth(t *testing.T) {
 	e := &manifest.Entry{Name: "tool", URL: "https://example.com/tool.git", Transport: "git"}
-	for _, depth := range []int{-2, -10} {
+	for _, depth := range []Depth{-2, -10} {
 		if _, err := Ensure(t.TempDir(), e, "", EnsureOpts{Depth: depth, Progress: noop}); err == nil {
 			t.Fatalf("expected an error for depth %d", depth)
 		}
@@ -559,6 +559,32 @@ func TestEnsureAttachedBranchEmptyRefUpgrade(t *testing.T) {
 	}
 }
 
+// TestDeepenTarget pins the refspec used by in-place upgrades: an attached
+// branch name, an exact tag (so servers that refuse fetch-by-SHA still work),
+// then the current HEAD commit.
+func TestDeepenTarget(t *testing.T) {
+	repo := makeHistoryRepo(t)
+	root := t.TempDir()
+	entry := func(name string) *manifest.Entry {
+		return &manifest.Entry{Name: name, URL: repo.url, Transport: "git"}
+	}
+
+	branchDir := ensureAt(t, root, entry("branch"), "", 1)
+	if got := deepenTarget(branchDir); got != "main" {
+		t.Fatalf("attached branch target = %q, want main", got)
+	}
+
+	tagDir := ensureAt(t, root, entry("tag"), repo.tag, 1)
+	if got := deepenTarget(tagDir); got != "refs/tags/"+repo.tag {
+		t.Fatalf("detached tag target = %q, want refs/tags/%s", got, repo.tag)
+	}
+
+	shaDir := ensureAt(t, root, entry("sha"), repo.tipSHA, 1)
+	if got := deepenTarget(shaDir); got != repo.tipSHA {
+		t.Fatalf("untagged detached target = %q, want %s", got, repo.tipSHA)
+	}
+}
+
 func TestEnsureFailedUpgradePreservesCheckout(t *testing.T) {
 	repo := makeHistoryRepo(t)
 	e := &manifest.Entry{Name: "tool", URL: repo.url, Transport: "git"}
@@ -591,6 +617,41 @@ func TestEnsureFailedUpgradePreservesCheckout(t *testing.T) {
 	assertHistory(t, dir, true, 3)
 }
 
+func TestDepthValues(t *testing.T) {
+	tests := []struct {
+		depth     Depth
+		wantName  string
+		wantValid bool
+		wantNorm  Depth
+	}{
+		{DepthFull, "full", true, DepthFull},
+		{DepthUnknown, "unknown", false, DepthDefault},
+		{DepthDefault, "1", true, DepthDefault},
+		{12, "12", true, 12},
+		{-2, "-2", false, -2},
+	}
+	for _, tt := range tests {
+		if got := tt.depth.String(); got != tt.wantName {
+			t.Errorf("Depth(%d).String() = %q, want %q", tt.depth, got, tt.wantName)
+		}
+		if got := tt.depth.valid(); got != tt.wantValid {
+			t.Errorf("Depth(%d).valid() = %v, want %v", tt.depth, got, tt.wantValid)
+		}
+		if got := tt.depth.normalized(); got != tt.wantNorm {
+			t.Errorf("Depth(%d).normalized() = %d, want %d", tt.depth, got, tt.wantNorm)
+		}
+	}
+}
+
+func TestWriteMarkerRejectsInvalidDepth(t *testing.T) {
+	bare, tag, _ := makeRepo(t)
+	e := &manifest.Entry{Name: "tool", URL: fileURL(bare), Transport: "git"}
+	dir := ensureAt(t, t.TempDir(), e, tag, 1)
+	if err := WriteMarker(dir, tag, -2); err == nil {
+		t.Fatal("WriteMarker accepted an invalid depth")
+	}
+}
+
 func TestReadMarkerOldWithoutDepth(t *testing.T) {
 	dir := t.TempDir()
 	body := "ref=v1.0.0\ncommit=abc123\nfetched=1700000000\n"
@@ -609,7 +670,7 @@ func TestReadMarkerOldWithoutDepth(t *testing.T) {
 func TestReadMarkerDepth(t *testing.T) {
 	tests := []struct {
 		line string
-		want int
+		want Depth
 	}{
 		{"depth=full", DepthFull},
 		{"depth=7", 7},
