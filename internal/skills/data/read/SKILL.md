@@ -4,7 +4,8 @@ description: Read the source of a library, dependency, CLI, or any git
   repository locally with source-fetch. Use for source links from GitHub,
   Codeberg, GitLab, or another Git host, questions about how a library works
   or where it implements a behavior, and searching code outside the current
-  workspace. Covers path, peek, ref overrides, and refreshing checkouts.
+  workspace. Covers path, peek, ref overrides, history depth (--deep/--depth),
+  and refreshing checkouts.
 ---
 
 # source-fetch — reading source
@@ -54,6 +55,14 @@ follow-up questions without going back online.
 - `peek <url>` with no ref also reuses any existing checkout. To refresh a
   peek tree or return to the default branch, run `rm <url>` then
   `peek <url> [ref]`.
+- Checkouts are shallow by default (one commit). For `git log -S`,
+  `git log -L`, or `git blame`, add `--deep` (complete history) or
+  `--depth N` (last N commits) to `path`, the default `<name>` fetch, or
+  `peek`, for example `source-fetch path <name> --deep` or
+  `source-fetch peek <url> --depth 50`. A cached shallow checkout is deepened
+  in place without moving HEAD, history is never reduced, and a failed upgrade
+  keeps the previous checkout. `update <name> --deep` forces a complete
+  re-clone instead.
 
 ## Peek details
 

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -173,6 +174,106 @@ func makeBareRepo(t *testing.T) string {
 	bare := filepath.Join(base, "bare.git")
 	gitT(t, base, "clone", "-q", "--bare", work, bare)
 	return bare
+}
+
+// gitOut runs git and returns its trimmed standard output.
+func gitOut(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// cliHistoryRepo is a file:// fixture with six commits on main, a tag on the
+// third commit and a two-commit side branch. `file://` is required for
+// `git clone --depth` to honor the depth.
+type cliHistoryRepo struct {
+	bare   string
+	url    string
+	tag    string
+	tagSHA string
+	tipSHA string
+	side   string
+}
+
+func makeHistoryRepo(t *testing.T) cliHistoryRepo {
+	t.Helper()
+	base := t.TempDir()
+	work := filepath.Join(base, "work")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitT(t, work, "init", "-q")
+	gitT(t, work, "symbolic-ref", "HEAD", "refs/heads/main")
+	gitT(t, work, "config", "user.email", "t@example.com")
+	gitT(t, work, "config", "user.name", "t")
+	var shas []string
+	for i := 1; i <= 6; i++ {
+		name := filepath.Join(work, fmt.Sprintf("file%d.txt", i))
+		if err := os.WriteFile(name, []byte("line\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		gitT(t, work, "add", ".")
+		gitT(t, work, "commit", "-q", "-m", fmt.Sprintf("commit %d", i))
+		shas = append(shas, gitOut(t, work, "rev-parse", "HEAD"))
+	}
+	tagSHA := shas[2]
+	gitT(t, work, "tag", "v1.0.0", tagSHA)
+
+	gitT(t, work, "checkout", "-q", "-b", "side", tagSHA)
+	for i := 1; i <= 2; i++ {
+		name := filepath.Join(work, fmt.Sprintf("side%d.txt", i))
+		if err := os.WriteFile(name, []byte("side\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		gitT(t, work, "add", ".")
+		gitT(t, work, "commit", "-q", "-m", fmt.Sprintf("side %d", i))
+	}
+	side := gitOut(t, work, "rev-parse", "HEAD")
+	gitT(t, work, "checkout", "-q", "main")
+
+	bare := filepath.Join(base, "bare.git")
+	gitT(t, base, "clone", "-q", "--bare", work, bare)
+	return cliHistoryRepo{
+		bare:   bare,
+		url:    fileURL(bare),
+		tag:    "v1.0.0",
+		tagSHA: tagSHA,
+		tipSHA: shas[5],
+		side:   side,
+	}
+}
+
+// writeManifestEntry writes a one-entry manifest and points the CLI at it.
+func writeManifestEntry(t *testing.T, name, repoURL string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), manifest.CanonicalName)
+	m := &manifest.Manifest{Path: path, Entries: []*manifest.Entry{{
+		Name: name, URL: repoURL, Transport: "git",
+	}}}
+	if err := m.Save(); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(manifest.EnvManifest, path)
+}
+
+func commitCountT(t *testing.T, dir string) int {
+	t.Helper()
+	out := gitOut(t, dir, "rev-list", "--count", "HEAD")
+	n, err := strconv.Atoi(out)
+	if err != nil {
+		t.Fatalf("commit count %q: %v", out, err)
+	}
+	return n
+}
+
+func isShallowT(t *testing.T, dir string) bool {
+	t.Helper()
+	return gitOut(t, dir, "rev-parse", "--is-shallow-repository") == "true"
 }
 
 func TestPeekFetchListRm(t *testing.T) {
@@ -544,6 +645,229 @@ func TestPathSubpathValidation(t *testing.T) {
 		if !strings.Contains(stderr, "escapes the repository") {
 			t.Fatalf("path %q stderr = %q", sub, stderr)
 		}
+	}
+}
+
+func TestDepthFlagValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"depth zero", []string{"path", "tool", "--depth", "0"}, "--depth must be a positive integer"},
+		{"depth not a number", []string{"path", "tool", "--depth", "abc"}, "--depth must be a positive integer"},
+		{"depth missing value", []string{"path", "tool", "--depth"}, "missing value for --depth"},
+		{"deep and depth", []string{"path", "tool", "--deep", "--depth", "2"}, "cannot use --deep and --depth together"},
+		{"deep invalid value", []string{"path", "tool", "--deep=yes"}, "--deep must be true or false"},
+		{"peek deep missing URL", []string{"peek", "--deep"}, "missing URL"},
+		{"peek depth missing URL", []string{"peek", "--depth", "2"}, "missing URL"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, out, stderr := runCLI(t, tt.args...)
+			if code != 1 {
+				t.Fatalf("exit code = %d, want 1", code)
+			}
+			if strings.TrimSpace(out) != "" {
+				t.Fatalf("stdout = %q, want nothing", out)
+			}
+			if !strings.Contains(stderr, tt.want) {
+				t.Fatalf("stderr = %q, want %q", stderr, tt.want)
+			}
+		})
+	}
+}
+
+func TestDepthDeepFalseMeansDefault(t *testing.T) {
+	repo := makeHistoryRepo(t)
+	writeManifestEntry(t, "tool", repo.url)
+	t.Setenv(cache.EnvCache, t.TempDir())
+
+	code, out, stderr := runCLI(t, "path", "tool", "--deep=false")
+	if code != 0 {
+		t.Fatalf("exit code = %d: %s", code, stderr)
+	}
+	dir := strings.TrimSpace(out)
+	if !isShallowT(t, dir) || commitCountT(t, dir) != 1 {
+		t.Fatalf("--deep=false should keep the shallow default")
+	}
+	if m, ok := fetch.ReadMarker(dir); !ok || m.Depth != fetch.DepthDefault {
+		t.Fatalf("marker = %+v ok=%v, want depth %d", m, ok, fetch.DepthDefault)
+	}
+}
+
+func TestDepthFlagPathAndUpgrade(t *testing.T) {
+	repo := makeHistoryRepo(t)
+	writeManifestEntry(t, "tool", repo.url)
+	t.Setenv(cache.EnvCache, t.TempDir())
+
+	code, out, stderr := runCLI(t, "path", "tool", "--depth", "3")
+	if code != 0 {
+		t.Fatalf("path --depth 3 exit code = %d: %s", code, stderr)
+	}
+	dir := strings.TrimSpace(out)
+	if !isShallowT(t, dir) || commitCountT(t, dir) != 3 {
+		t.Fatalf("path --depth 3 did not fetch 3 commits")
+	}
+
+	code, out, stderr = runCLI(t, "path", "tool", "--deep")
+	if code != 0 {
+		t.Fatalf("path --deep exit code = %d: %s", code, stderr)
+	}
+	if strings.TrimSpace(out) != dir {
+		t.Fatalf("upgrade moved the checkout")
+	}
+	if isShallowT(t, dir) || commitCountT(t, dir) != 6 {
+		t.Fatalf("path --deep did not fetch full history")
+	}
+
+	// A shallower request is a no-op: history is never reduced.
+	code, _, stderr = runCLI(t, "path", "tool", "--depth", "1")
+	if code != 0 {
+		t.Fatalf("path --depth 1 exit code = %d: %s", code, stderr)
+	}
+	if isShallowT(t, dir) || commitCountT(t, dir) != 6 {
+		t.Fatalf("path --depth 1 reduced a complete checkout")
+	}
+}
+
+func TestDepthFlagPathSubpath(t *testing.T) {
+	repo := makeHistoryRepo(t)
+	writeManifestEntry(t, "tool", repo.url)
+	t.Setenv(cache.EnvCache, t.TempDir())
+
+	code, out, stderr := runCLI(t, "path", "tool", "file1.txt", "--depth", "3")
+	if code != 0 {
+		t.Fatalf("exit code = %d: %s", code, stderr)
+	}
+	file := strings.TrimSpace(out)
+	if filepath.Base(file) != "file1.txt" {
+		t.Fatalf("path printed %q, want a file1.txt path", file)
+	}
+	if !isShallowT(t, filepath.Dir(file)) || commitCountT(t, filepath.Dir(file)) != 3 {
+		t.Fatalf("subpath fetch ignored --depth 3")
+	}
+}
+
+func TestDepthFlagDefaultFetch(t *testing.T) {
+	repo := makeHistoryRepo(t)
+	writeManifestEntry(t, "tool", repo.url)
+	t.Setenv(cache.EnvCache, t.TempDir())
+
+	code, out, stderr := runCLI(t, "tool", "--depth", "2")
+	if code != 0 {
+		t.Fatalf("exit code = %d: %s", code, stderr)
+	}
+	dir := strings.TrimSpace(out)
+	if !isShallowT(t, dir) || commitCountT(t, dir) != 2 {
+		t.Fatalf("<name> --depth 2 did not fetch 2 commits")
+	}
+
+	// A leading flag routes to the default fetch command.
+	code, out, stderr = runCLI(t, "--deep", "tool")
+	if code != 0 {
+		t.Fatalf("--deep tool exit code = %d: %s", code, stderr)
+	}
+	if strings.TrimSpace(out) != dir {
+		t.Fatalf("--deep tool moved the checkout")
+	}
+	if isShallowT(t, dir) || commitCountT(t, dir) != 6 {
+		t.Fatalf("--deep tool did not fetch full history")
+	}
+}
+
+func TestDepthFlagPeek(t *testing.T) {
+	repo := makeHistoryRepo(t)
+	t.Setenv(cache.EnvCache, t.TempDir())
+
+	code, out, stderr := runCLI(t, "peek", repo.url, "--depth", "3")
+	if code != 0 {
+		t.Fatalf("peek --depth 3 exit code = %d: %s", code, stderr)
+	}
+	dir := strings.TrimSpace(out)
+	if !isShallowT(t, dir) || commitCountT(t, dir) != 3 {
+		t.Fatalf("peek --depth 3 did not fetch 3 commits")
+	}
+
+	code, _, stderr = runCLI(t, "peek", repo.url, "--deep")
+	if code != 0 {
+		t.Fatalf("peek --deep exit code = %d: %s", code, stderr)
+	}
+	if isShallowT(t, dir) || commitCountT(t, dir) != 6 {
+		t.Fatalf("peek --deep did not fetch full history")
+	}
+}
+
+func TestDepthFlagUpdateForceReclone(t *testing.T) {
+	repo := makeHistoryRepo(t)
+	writeManifestEntry(t, "tool", repo.url)
+	t.Setenv(cache.EnvCache, t.TempDir())
+
+	code, out, stderr := runCLI(t, "path", "tool")
+	if code != 0 {
+		t.Fatalf("path exit code = %d: %s", code, stderr)
+	}
+	dir := strings.TrimSpace(out)
+	if commitCountT(t, dir) != 1 {
+		t.Fatalf("default path should be shallow")
+	}
+
+	code, _, stderr = runCLI(t, "update", "tool", "--depth", "2")
+	if code != 0 {
+		t.Fatalf("update --depth 2 exit code = %d: %s", code, stderr)
+	}
+	if !isShallowT(t, dir) || commitCountT(t, dir) != 2 {
+		t.Fatalf("update --depth 2 did not re-clone at depth 2")
+	}
+
+	code, _, stderr = runCLI(t, "update", "tool", "--deep")
+	if code != 0 {
+		t.Fatalf("update --deep exit code = %d: %s", code, stderr)
+	}
+	if isShallowT(t, dir) || commitCountT(t, dir) != 6 {
+		t.Fatalf("update --deep did not re-clone full history")
+	}
+
+	// update is a forced re-clone, so a shallower depth does reset the cache.
+	code, _, stderr = runCLI(t, "update", "tool", "--depth", "1")
+	if code != 0 {
+		t.Fatalf("update --depth 1 exit code = %d: %s", code, stderr)
+	}
+	if !isShallowT(t, dir) || commitCountT(t, dir) != 1 {
+		t.Fatalf("update --depth 1 did not re-clone at depth 1")
+	}
+}
+
+func TestPeekDeepLinkWithDepth(t *testing.T) {
+	repo := makeHistoryRepo(t)
+	base := "https://github.com/acme/tool"
+	useInsteadOf(t, repo.bare, base)
+	t.Setenv(cache.EnvCache, t.TempDir())
+
+	code, out, stderr := runCLI(t, "peek", base+"/blob/main/file1.txt", "--depth", "3")
+	if code != 0 {
+		t.Fatalf("peek deep link --depth 3 exit code = %d: %s", code, stderr)
+	}
+	file := strings.TrimSpace(out)
+	if filepath.Base(file) != "file1.txt" {
+		t.Fatalf("peek printed %q, want a file1.txt path", file)
+	}
+	dir := filepath.Dir(file)
+	if !isShallowT(t, dir) || commitCountT(t, dir) != 3 {
+		t.Fatalf("deep-link peek ignored --depth 3")
+	}
+}
+
+func TestUnknownOptionStillFails(t *testing.T) {
+	code, out, stderr := runCLI(t, "--nope")
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if strings.TrimSpace(out) != "" {
+		t.Fatalf("stdout = %q, want nothing", out)
+	}
+	if !strings.Contains(stderr, "unknown option") {
+		t.Fatalf("stderr = %q, want an unknown-option error", stderr)
 	}
 }
 

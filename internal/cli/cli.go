@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"slices"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -98,9 +99,23 @@ func dispatch(args []string) error {
 		return nil
 	}
 	if strings.HasPrefix(args[0], "-") {
+		if isFetchFlag(args[0]) {
+			return cmdFetch(args)
+		}
 		return fmt.Errorf("unknown option %q", args[0])
 	}
 	return cmdFetch(args)
+}
+
+// isFetchFlag reports whether arg is one of the flags accepted by the default
+// fetch command, so `source-fetch --deep <name>` routes there while other
+// leading flags remain unknown options.
+func isFetchFlag(arg string) bool {
+	if !strings.HasPrefix(arg, "--") {
+		return false
+	}
+	name, _, _ := strings.Cut(strings.TrimPrefix(arg, "--"), "=")
+	return name == "deep" || name == "depth"
 }
 
 func progress(format string, args ...any) {
@@ -137,20 +152,66 @@ func entry(name string) (*manifest.Manifest, *manifest.Entry, string, error) {
 	return m, e, root, nil
 }
 
+// fetchFlags are the history flags accepted by every command that fetches:
+// path, the default <name> fetch, peek and update.
+var fetchFlags = map[string]bool{
+	"deep":  false,
+	"depth": true,
+}
+
+// parseDepthFlags turns --deep/--depth into a fetch depth. Zero flags mean the
+// default shallow clone; the two flags are mutually exclusive.
+func parseDepthFlags(flags map[string]string) (int, error) {
+	_, deepSet := flags["deep"]
+	_, depthSet := flags["depth"]
+	if deepSet && depthSet {
+		return 0, fmt.Errorf("cannot use --deep and --depth together")
+	}
+	if depthSet {
+		n, err := strconv.Atoi(flags["depth"])
+		if err != nil || n < 1 {
+			return 0, fmt.Errorf("--depth must be a positive integer, got %q", flags["depth"])
+		}
+		return n, nil
+	}
+	if deepSet {
+		switch flags["deep"] {
+		case "true":
+			return fetch.DepthFull, nil
+		case "false":
+			return fetch.DepthDefault, nil
+		default:
+			return 0, fmt.Errorf("--deep must be true or false, got %q", flags["deep"])
+		}
+	}
+	return fetch.DepthDefault, nil
+}
+
 func cmdFetch(args []string) error {
-	if len(args) == 0 {
+	pos, flags, err := parseFlags(args, fetchFlags)
+	if err != nil {
+		return err
+	}
+	if len(pos) == 0 {
 		return fmt.Errorf("missing source name")
 	}
-	name := args[0]
+	if len(pos) > 2 {
+		return fmt.Errorf("usage: <name> [ref] [--deep | --depth N]")
+	}
+	name := pos[0]
 	cliRef := ""
-	if len(args) > 1 {
-		cliRef = args[1]
+	if len(pos) > 1 {
+		cliRef = pos[1]
+	}
+	depth, err := parseDepthFlags(flags)
+	if err != nil {
+		return err
 	}
 	_, e, root, err := entry(name)
 	if err != nil {
 		return err
 	}
-	dir, err := fetch.Ensure(root, e, resolve.Ref(e, cliRef), false, progress)
+	dir, err := fetch.Ensure(root, e, resolve.Ref(e, cliRef), fetch.EnsureOpts{Depth: depth, Progress: progress})
 	if err != nil {
 		return err
 	}
@@ -159,19 +220,30 @@ func cmdFetch(args []string) error {
 }
 
 func cmdPath(args []string) error {
-	if len(args) == 0 {
+	pos, flags, err := parseFlags(args, fetchFlags)
+	if err != nil {
+		return err
+	}
+	if len(pos) == 0 {
 		return fmt.Errorf("missing source name")
 	}
-	name := args[0]
+	if len(pos) > 2 {
+		return fmt.Errorf("usage: path <name> [subpath] [--deep | --depth N]")
+	}
+	name := pos[0]
 	sub := ""
-	if len(args) > 1 {
-		sub = args[1]
+	if len(pos) > 1 {
+		sub = pos[1]
+	}
+	depth, err := parseDepthFlags(flags)
+	if err != nil {
+		return err
 	}
 	_, e, root, err := entry(name)
 	if err != nil {
 		return err
 	}
-	dir, err := fetch.Ensure(root, e, resolve.Ref(e, ""), false, progress)
+	dir, err := fetch.Ensure(root, e, resolve.Ref(e, ""), fetch.EnsureOpts{Depth: depth, Progress: progress})
 	if err != nil {
 		return err
 	}
@@ -224,27 +296,42 @@ func subpathPath(dir, sub string) (string, error) {
 // (into the ad-hoc cache) and print the directory. URLs may also be web links
 // to a file, directory, commit or tag. With no URL it lists the ad-hoc cache.
 func cmdPeek(args []string) error {
+	pos, flags, err := parseFlags(args, fetchFlags)
+	if err != nil {
+		return err
+	}
+	if len(pos) == 0 {
+		if len(flags) > 0 {
+			return fmt.Errorf("missing URL")
+		}
+		root, err := cache.AdhocRoot()
+		if err != nil {
+			return err
+		}
+		return listAdhoc(root)
+	}
+	if len(pos) > 2 {
+		return fmt.Errorf("usage: peek <url> [ref] [--deep | --depth N]")
+	}
+	depth, err := parseDepthFlags(flags)
+	if err != nil {
+		return err
+	}
 	root, err := cache.AdhocRoot()
 	if err != nil {
 		return err
 	}
-	if len(args) == 0 {
-		return listAdhoc(root)
-	}
-	if len(args) > 2 {
-		return fmt.Errorf("usage: peek <url> [ref]")
-	}
 	cliRef := ""
-	if len(args) > 1 {
-		cliRef = args[1]
+	if len(pos) > 1 {
+		cliRef = pos[1]
 	}
-	parsed, err := resolve.ParseWebURL(args[0], cliRef)
+	parsed, err := resolve.ParseWebURL(pos[0], cliRef)
 	if err != nil {
 		return err
 	}
 	ref := cmp.Or(cliRef, parsed.Ref)
 	e := &manifest.Entry{Name: cache.AdhocName(parsed.RepoURL), URL: parsed.RepoURL, Transport: "git"}
-	dir, err := fetch.Ensure(root, e, ref, false, progress)
+	dir, err := fetch.Ensure(root, e, ref, fetch.EnsureOpts{Depth: depth, Progress: progress})
 	if err != nil {
 		return err
 	}
@@ -300,15 +387,26 @@ func listAdhoc(root string) error {
 }
 
 func cmdUpdate(args []string) error {
-	if len(args) == 0 {
+	pos, flags, err := parseFlags(args, fetchFlags)
+	if err != nil {
+		return err
+	}
+	if len(pos) == 0 {
 		return fmt.Errorf("missing source name")
 	}
-	name := args[0]
+	if len(pos) > 1 {
+		return fmt.Errorf("usage: update <name> [--deep | --depth N]")
+	}
+	depth, err := parseDepthFlags(flags)
+	if err != nil {
+		return err
+	}
+	name := pos[0]
 	_, e, root, err := entry(name)
 	if err != nil {
 		return err
 	}
-	dir, err := fetch.Ensure(root, e, resolve.Ref(e, ""), true, progress)
+	dir, err := fetch.Ensure(root, e, resolve.Ref(e, ""), fetch.EnsureOpts{Force: true, Depth: depth, Progress: progress})
 	if err != nil {
 		return err
 	}
@@ -674,11 +772,15 @@ usage: %[1]s [command] [args]
 
 commands:
   (none) | list          list every manifest entry (version, ref, cache, age)
-  path <name> [subpath]  ensure cached, print its directory (quiet stdout)
-  <name> [ref]           ensure cached, print its directory (one-shot ref)
-  peek <url> [ref]       one-off fetch of a git URL in no manifest (ad-hoc cache)
+  path <name> [subpath] [--deep|--depth N]
+                         ensure cached, print its directory (quiet stdout)
+  <name> [ref] [--deep|--depth N]
+                         ensure cached, print its directory (one-shot ref)
+  peek <url|web-link> [ref] [--deep|--depth N]
+                         one-off fetch of a git URL or deep link (ad-hoc cache)
   peek                   list the ad-hoc cache
-  update <name>          force a fresh clone at the resolved ref
+  update <name> [--deep|--depth N]
+                         force a fresh clone at the resolved ref
   rm <name> | <url>      delete one cached tree (manifest entry or ad-hoc)
   clean                  delete the cache for the current manifest
   manifest               print the manifest path in use
@@ -694,6 +796,14 @@ commands:
   skills get --all       print every skill
   version | --version    print the version
   help | -h | --help     print this usage
+
+history flags (path, <name>, peek, update):
+  --deep                 fetch complete history
+  --depth N              fetch the last N commits
+
+depth:
+  default is a shallow clone (1 commit); --deep fetches full history,
+  --depth N fetches the last N commits (for git log / git blame).
 
 environment:
   %[2]s      explicit manifest path

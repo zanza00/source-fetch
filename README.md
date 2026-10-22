@@ -16,6 +16,8 @@ binary to match the installed CLI version.
 - **One-off `peek`** — fetch any git URL once, in a separate ad-hoc cache.
 - **Deep links** — paste a GitHub, GitLab, or Codeberg link to a file,
   directory, commit, or tag and get the local path.
+- **History on demand** — shallow by default; `--deep` or `--depth N` when you
+  need `git log` or `git blame`.
 - **Agent-friendly** — prints a plain directory on stdout, progress on stderr.
 
 ## Install the CLI and skill
@@ -116,12 +118,15 @@ manifest; the quick start above and `manifest.example.toml` configure `chezmoi`.
 source-fetch                      # list every entry: versions, refs, cache
 source-fetch path chezmoi         # fetch if needed, print dir (quiet stdout)
 source-fetch path chezmoi <subpath> # print a subpath inside the cached tree
+source-fetch path chezmoi --deep  # ensure full history for git log / blame
 cd "$(source-fetch path chezmoi)" # read the source
 source-fetch chezmoi v2.73.0       # ref override for this call
-source-fetch peek <url|web-link> [ref]
+source-fetch chezmoi --depth 20    # fetch the last 20 commits
+source-fetch peek <url|web-link> [ref] [--deep | --depth N]
                                   # one-off fetch of a git URL or deep link
 source-fetch peek                 # list ad-hoc cached trees
 source-fetch update chezmoi       # force re-clone at the resolved (pinned) ref
+source-fetch update chezmoi --deep # force a complete re-clone
 source-fetch rm chezmoi           # drop one cached tree
 source-fetch rm <url>             # drop one ad-hoc tree
 source-fetch clean                # drop the cache for the current manifest
@@ -213,6 +218,29 @@ Limits:
   first segment becomes the ref and the rest the subpath. Pass the ref to
   disambiguate, for example `peek <url> release/1.0`.
 
+## History depth
+
+Checkouts are shallow by default: one commit, enough to read the current tree.
+`git log`, `git blame`, and history searches need more:
+
+```sh
+source-fetch path chezmoi --depth 20   # last 20 commits
+source-fetch path chezmoi --deep       # complete history
+source-fetch peek <url> --depth 50
+source-fetch update chezmoi --deep     # forced complete re-clone
+```
+
+The flags work after the command for `path`, the default `<name>` fetch,
+`peek`, and `update`; `source-fetch --deep <name>` is also accepted for the
+default fetch. `--deep` and `--depth` are mutually exclusive, and `--depth`
+must be a positive integer.
+
+An existing checkout is deepened in place: the directory and HEAD stay where
+they are, and a failed upgrade leaves the previous history intact. Upgrades
+never reduce history, so `--depth N` is a no-op when the cache already has at
+least N commits or full history. `update` is different: it always re-clones at
+the requested depth.
+
 ## Cache
 
 By default, `<base>` is `$XDG_CACHE_HOME` or the platform's user cache directory:
@@ -232,7 +260,11 @@ namespace.
   on known hosts) share one tree. HTTP, SSH and scp-like URLs stay distinct.
   Trees created by versions before this canonicalisation are not migrated and
   may remain orphaned; they are disposable.
-- Each tree is a plain git checkout with a `.source-fetch-ref` marker.
+- Each tree is a plain git checkout with a `.source-fetch-ref` marker recording
+  the requested ref, actual HEAD commit, fetch time and history depth
+  (`depth=1|N|full`). Markers written by older versions have no `depth=` and
+  are still read; the depth is informational because the real git state decides
+  whether an upgrade is needed.
 - `$SOURCE_FETCH_CACHE` overrides the root entirely (no namespace).
 - The cache is safe to delete at any time; `clean` refuses to run on
   empty/`/`/`$HOME`. Normally `clean` removes only the current manifest's cache;
