@@ -114,3 +114,25 @@ skills/source-fetch/   discovery stub (installed into agents via `npx skills add
   (refuses empty/`/`/`$HOME`) — preserve them when touching `internal/cache`.
 - Design notes live in `docs/` (`the_idea.md`, `transports.md`,
   `manifest.md`) — consult them before changing core fetch/resolve behavior.
+
+## Richieste tra progetti (protocollo)
+
+Questo repo partecipa al protocollo cross-project: le richieste tra progetti
+viaggiano come task Vikunja gestite con la CLI `vk`. Spec completa (ciclo,
+template, registro mittenti, governance): `.scratch/cross-project-requests/spec.md`
+nel repo `~/dev/vk-custom-cli`.
+
+- **Identità**: l'agente di questo repo parla come il progetto `source-fetch`:
+  `VK_IDENTITY=source-fetch vk ...` (config e jwt in `~/.config/vk/identities/source-fetch/`);
+  la firma macchina è la riga `Mittente: source-fetch` nel body delle richieste.
+- **Depositare (mittente)**: `VK_IDENTITY=source-fetch vk add <progetto> "<titolo>"
+  -l richiesta -d "<body>"` — titolo libero, label globale `richiesta`, body col
+  template a heading `##` (Contesto, Richiesta, Vincoli, Fatto quando) con la
+  riga `Mittente: source-fetch` in cima.
+- **Ricevere (destinatario)**: le richieste per questo progetto arrivano sulla
+  board `Source Fetch` — `VK_IDENTITY=source-fetch vk ls "Source Fetch" -l richiesta`,
+  poi `show <id>`; presa in carico = commento + `mv <id> Doing`; figli legati
+  all'epic con `rel <figlio> <epic>`; esito = ultimo commento, poi
+  `done <id> -m "Esito: ..."`.
+- **Polling (mittente)**: le condivisioni non notificano —
+  `VK_IDENTITY=source-fetch vk search "Mittente: source-fetch"` per stato ed esiti.
